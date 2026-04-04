@@ -16,11 +16,8 @@ def extract_status_change(chat_member_update: ChatMemberUpdated):
 
 async def channel_detection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        result = extract_status_change(update.my_chat_member)
-        if result is None:
-            return
-        old_status, new_status = result
-        if old_status is None:
+        old_status, new_status = extract_status_change(update.my_chat_member)
+        if old_status is None and new_status is None:
             return
         chat = update.my_chat_member.chat
         from_user = update.my_chat_member.from_user
