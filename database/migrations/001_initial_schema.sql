@@ -1,185 +1,178 @@
+-- Telegram Growth Engine Schema
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
+-- Channel Owners
 CREATE TABLE IF NOT EXISTS channel_owners (
     user_id BIGINT PRIMARY KEY,
     username VARCHAR(255),
     first_name VARCHAR(255),
     last_name VARCHAR(255),
-    role VARCHAR(50) DEFAULT 'owner',
-    tier VARCHAR(50) DEFAULT 'free',
+    registered_at TIMESTAMPTZ DEFAULT NOW(),
+    last_active TIMESTAMPTZ DEFAULT NOW(),
+    tier VARCHAR(20) DEFAULT 'free',
+    referral_code VARCHAR(50) UNIQUE,
+    referred_by BIGINT,
     language VARCHAR(10) DEFAULT 'en',
-    registered_at TIMESTAMP DEFAULT NOW(),
-    last_active TIMESTAMP DEFAULT NOW()
+    is_banned BOOLEAN DEFAULT FALSE,
+    notes TEXT
 );
 
-CREATE TABLE IF NOT EXISTS channels (
-    id SERIAL PRIMARY KEY,
-    owner_id BIGINT REFERENCES channel_owners(user_id) ON DELETE CASCADE,
-    channel_id BIGINT UNIQUE NOT NULL,
-    channel_name VARCHAR(255),
-    channel_type VARCHAR(50) DEFAULT 'channel',
-    auto_accept BOOLEAN DEFAULT true,
-    accept_delay INTEGER DEFAULT 0,
-    captcha_enabled BOOLEAN DEFAULT false,
-    cross_promo_enabled BOOLEAN DEFAULT false,
-    watermark_enabled BOOLEAN DEFAULT false,
-    promo_text TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_channels_owner ON channels(owner_id);
-CREATE INDEX idx_channels_channel_id ON channels(channel_id);
-
-CREATE TABLE IF NOT EXISTS channel_settings (
-    channel_id BIGINT PRIMARY KEY REFERENCES channels(channel_id) ON DELETE CASCADE,
-    welcome_enabled BOOLEAN DEFAULT true,
-    welcome_delay INTEGER DEFAULT 0,
-    goodbye_enabled BOOLEAN DEFAULT false,
-    goodbye_message TEXT,
-    auto_delete_join_msg BOOLEAN DEFAULT false,
-    auto_delete_delay INTEGER DEFAULT 300,
-    min_account_age_days INTEGER DEFAULT 0,
-    block_bots BOOLEAN DEFAULT false,
-    require_profile_photo BOOLEAN DEFAULT false,
-    max_pending_requests INTEGER DEFAULT 1000,
-    notification_chat_id BIGINT,
-    custom_rules TEXT
-);
-
-CREATE TABLE IF NOT EXISTS join_requests (
-    id SERIAL PRIMARY KEY,
-    channel_id BIGINT NOT NULL,
-    user_id BIGINT NOT NULL,
+-- End Users
+CREATE TABLE IF NOT EXISTS end_users (
+    user_id BIGINT PRIMARY KEY,
     username VARCHAR(255),
     first_name VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'pending',
-    requested_at TIMESTAMP DEFAULT NOW(),
-    processed_at TIMESTAMP,
-    UNIQUE(channel_id, user_id)
+    last_name VARCHAR(255),
+    language_code VARCHAR(10),
+    first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+    last_active TIMESTAMPTZ DEFAULT NOW(),
+    referrer_id BIGINT,
+    referral_count INTEGER DEFAULT 0,
+    coins INTEGER DEFAULT 0,
+    source VARCHAR(100) DEFAULT 'organic',
+    source_channel BIGINT,
+    is_banned BOOLEAN DEFAULT FALSE,
+    has_blocked_bot BOOLEAN DEFAULT FALSE
 );
 
-CREATE INDEX idx_join_requests_channel ON join_requests(channel_id);
-CREATE INDEX idx_join_requests_status ON join_requests(status);
-CREATE INDEX idx_join_requests_channel_status ON join_requests(channel_id, status);
-
-CREATE TABLE IF NOT EXISTS welcome_messages (
-    channel_id BIGINT PRIMARY KEY,
-    message_text TEXT NOT NULL,
-    media_type VARCHAR(50),
-    media_file_id TEXT,
-    buttons_json JSONB,
-    updated_at TIMESTAMP DEFAULT NOW()
+-- Managed Channels
+CREATE TABLE IF NOT EXISTS managed_channels (
+    chat_id BIGINT PRIMARY KEY,
+    owner_id BIGINT NOT NULL REFERENCES channel_owners(user_id) ON DELETE CASCADE,
+    chat_title VARCHAR(255),
+    chat_username VARCHAR(255),
+    chat_type VARCHAR(20) DEFAULT 'channel',
+    member_count INTEGER DEFAULT 0,
+    auto_approve BOOLEAN DEFAULT TRUE,
+    approve_mode VARCHAR(20) DEFAULT 'instant',
+    drip_rate INTEGER DEFAULT 50,
+    drip_interval INTEGER DEFAULT 30,
+    welcome_dm_enabled BOOLEAN DEFAULT TRUE,
+    welcome_message TEXT DEFAULT 'Welcome to {channel_name}! \ud83c\udf89',
+    welcome_media_type VARCHAR(20),
+    welcome_media_file_id TEXT,
+    welcome_buttons_json JSONB,
+    welcome_parse_mode VARCHAR(10) DEFAULT 'HTML',
+    welcome_messages_i18n JSONB DEFAULT '{}',
+    force_subscribe_enabled BOOLEAN DEFAULT FALSE,
+    force_subscribe_channels JSONB DEFAULT '[]',
+    cross_promo_enabled BOOLEAN DEFAULT FALSE,
+    cross_promo_category VARCHAR(50),
+    cross_promo_text TEXT,
+    watermark_enabled BOOLEAN DEFAULT TRUE,
+    total_requests_received INTEGER DEFAULT 0,
+    total_approved INTEGER DEFAULT 0,
+    total_declined INTEGER DEFAULT 0,
+    total_dms_sent INTEGER DEFAULT 0,
+    total_dms_failed INTEGER DEFAULT 0,
+    pending_requests INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    bot_is_admin BOOLEAN DEFAULT TRUE,
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    last_request_at TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_mc_owner ON managed_channels(owner_id);
+CREATE INDEX IF NOT EXISTS idx_mc_active ON managed_channels(is_active);
 
-CREATE TABLE IF NOT EXISTS captcha_sessions (
-    id SERIAL PRIMARY KEY,
+-- Join Requests
+CREATE TABLE IF NOT EXISTS join_requests (
+    id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
-    channel_id BIGINT NOT NULL,
-    correct_answer VARCHAR(50) NOT NULL,
-    attempts INTEGER DEFAULT 0,
-    max_attempts INTEGER DEFAULT 3,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, channel_id)
+    chat_id BIGINT NOT NULL REFERENCES managed_channels(chat_id) ON DELETE CASCADE,
+    username VARCHAR(255),
+    first_name VARCHAR(255),
+    user_language VARCHAR(10),
+    request_time TIMESTAMPTZ DEFAULT NOW(),
+    status VARCHAR(20) DEFAULT 'pending',
+    processed_at TIMESTAMPTZ,
+    processed_by VARCHAR(20) DEFAULT 'auto',
+    dm_attempted BOOLEAN DEFAULT FALSE,
+    dm_sent BOOLEAN DEFAULT FALSE,
+    dm_failed_reason TEXT,
+    force_sub_required BOOLEAN DEFAULT FALSE,
+    force_sub_completed BOOLEAN DEFAULT FALSE,
+    force_sub_completed_at TIMESTAMPTZ,
+    UNIQUE(user_id, chat_id)
 );
+CREATE INDEX IF NOT EXISTS idx_jr_status ON join_requests(status);
+CREATE INDEX IF NOT EXISTS idx_jr_chat ON join_requests(chat_id);
 
-CREATE INDEX idx_captcha_expires ON captcha_sessions(expires_at);
-
-CREATE TABLE IF NOT EXISTS daily_stats (
-    id SERIAL PRIMARY KEY,
-    channel_id BIGINT NOT NULL,
-    stat_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    stat_type VARCHAR(50) NOT NULL,
-    count INTEGER DEFAULT 0,
-    UNIQUE(channel_id, stat_date, stat_type)
-);
-
-CREATE INDEX idx_daily_stats_channel_date ON daily_stats(channel_id, stat_date);
-
-CREATE TABLE IF NOT EXISTS referrals (
-    id SERIAL PRIMARY KEY,
-    referrer_id BIGINT NOT NULL,
-    channel_id BIGINT,
-    code VARCHAR(50) UNIQUE NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_referrals_code ON referrals(code);
-CREATE INDEX idx_referrals_referrer ON referrals(referrer_id);
-
-CREATE TABLE IF NOT EXISTS referral_rewards (
-    id SERIAL PRIMARY KEY,
-    referrer_id BIGINT NOT NULL,
-    referred_id BIGINT NOT NULL,
-    channel_id BIGINT,
-    rewarded_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(referrer_id, referred_id, channel_id)
-);
-
-CREATE TABLE IF NOT EXISTS scheduled_posts (
-    id SERIAL PRIMARY KEY,
-    channel_id BIGINT NOT NULL,
-    text TEXT,
-    media_type VARCHAR(50),
-    media_file_id TEXT,
-    scheduled_at TIMESTAMP,
-    cron_expression VARCHAR(100),
-    status VARCHAR(50) DEFAULT 'pending',
-    sent_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_scheduled_posts_status ON scheduled_posts(status);
-CREATE INDEX idx_scheduled_posts_scheduled ON scheduled_posts(scheduled_at);
-
+-- Broadcasts
 CREATE TABLE IF NOT EXISTS broadcasts (
-    id SERIAL PRIMARY KEY,
-    channel_id BIGINT NOT NULL,
-    text TEXT,
-    media_type VARCHAR(50),
+    broadcast_id BIGSERIAL PRIMARY KEY,
+    owner_id BIGINT REFERENCES channel_owners(user_id),
+    channel_id BIGINT,
+    content TEXT,
+    content_type VARCHAR(20) DEFAULT 'text',
     media_file_id TEXT,
-    status VARCHAR(50) DEFAULT 'pending',
+    target_segment VARCHAR(100) DEFAULT 'all',
     sent_count INTEGER DEFAULT 0,
     failed_count INTEGER DEFAULT 0,
-    total_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW(),
-    completed_at TIMESTAMP
+    blocked_count INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
 );
 
+-- Bot Clones
 CREATE TABLE IF NOT EXISTS bot_clones (
-    id SERIAL PRIMARY KEY,
-    owner_id BIGINT REFERENCES channel_owners(user_id) ON DELETE CASCADE,
-    bot_token TEXT NOT NULL,
-    label VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'pending',
+    clone_id BIGSERIAL PRIMARY KEY,
+    owner_id BIGINT NOT NULL REFERENCES channel_owners(user_id) ON DELETE CASCADE,
+    bot_token TEXT NOT NULL UNIQUE,
+    bot_username VARCHAR(255),
+    bot_first_name VARCHAR(255),
+    is_active BOOLEAN DEFAULT FALSE,
+    error_count INTEGER DEFAULT 0,
     last_error TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_clones_owner ON bot_clones(owner_id);
 
-CREATE INDEX idx_bot_clones_owner ON bot_clones(owner_id);
-CREATE INDEX idx_bot_clones_status ON bot_clones(status);
-
-CREATE TABLE IF NOT EXISTS subscriptions (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES channel_owners(user_id) ON DELETE CASCADE,
-    tier VARCHAR(50) NOT NULL DEFAULT 'free',
-    status VARCHAR(50) DEFAULT 'active',
-    payment_id VARCHAR(255),
-    expires_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
-CREATE INDEX idx_subscriptions_status ON subscriptions(status, expires_at);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id SERIAL PRIMARY KEY,
+-- Analytics Events
+CREATE TABLE IF NOT EXISTS analytics_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(50) NOT NULL,
+    owner_id BIGINT,
+    channel_id BIGINT,
     user_id BIGINT,
-    action VARCHAR(255) NOT NULL,
-    details JSONB,
-    created_at TIMESTAMP DEFAULT NOW()
+    data JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ae_type ON analytics_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_ae_time ON analytics_events(created_at);
+
+-- Templates
+CREATE TABLE IF NOT EXISTS templates (
+    template_id BIGSERIAL PRIMARY KEY,
+    owner_id BIGINT NOT NULL REFERENCES channel_owners(user_id),
+    name VARCHAR(100) NOT NULL,
+    content_type VARCHAR(20) DEFAULT 'text',
+    content TEXT,
+    media_file_id TEXT,
+    buttons_json JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(owner_id, name)
 );
 
-CREATE INDEX idx_audit_log_user ON audit_log(user_id);
-CREATE INDEX idx_audit_log_action ON audit_log(action);
+-- Auto Post Groups
+CREATE TABLE IF NOT EXISTS auto_post_groups (
+    id BIGSERIAL PRIMARY KEY,
+    owner_id BIGINT NOT NULL REFERENCES channel_owners(user_id),
+    chat_id BIGINT NOT NULL,
+    chat_title VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(owner_id, chat_id)
+);
+
+-- Payments
+CREATE TABLE IF NOT EXISTS payments (
+    payment_id BIGSERIAL PRIMARY KEY,
+    owner_id BIGINT NOT NULL REFERENCES channel_owners(user_id),
+    amount INTEGER DEFAULT 0,
+    tier VARCHAR(20),
+    duration_days INTEGER,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
