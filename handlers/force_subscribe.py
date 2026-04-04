@@ -124,6 +124,26 @@ async def handle_force_sub_channel_input(update, context):
                 'Send the channel username (e.g. @mychannel) or /cancel'
             )
             return FORCE_SUB_INPUT
+
+        # Verify bot is admin in the force sub channel (needed to check member status)
+        try:
+            bot_member = await context.bot.get_chat_member(chat_info.id, context.bot.id)
+            if bot_member.status not in ('administrator', 'creator'):
+                await update.message.reply_text(
+                    f'\u26a0\ufe0f I need to be an admin in {chat_info.title} '
+                    f'to verify if users have joined it.\n\n'
+                    f'Please add me as admin to {chat_info.title} first, then try again.\n\n'
+                    f'Send the channel username again after adding me, or /cancel'
+                )
+                return FORCE_SUB_INPUT
+        except Exception:
+            await update.message.reply_text(
+                f'\u26a0\ufe0f I\'m not a member of {chat_info.title}.\n\n'
+                f'Please add me as admin to that channel first so I can '
+                f'verify user membership.\n\n'
+                f'Send the channel username again after adding me, or /cancel'
+            )
+            return FORCE_SUB_INPUT
         
         channel = await db.get_channel(chat_id)
         current_channels_raw = channel.get('force_subscribe_channels') or []
