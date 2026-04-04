@@ -34,7 +34,7 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check clone limits
     tier = owner.get('tier', 'free')
-    existing_clones = await db.get_user_clones(user_id)
+    existing_clones = await db.get_owner_clones(user_id)
     clone_count = len(existing_clones) if existing_clones else 0
 
     limits = {'free': 1, 'basic': 3, 'pro': 10, 'enterprise': 50}
@@ -142,7 +142,7 @@ async def clone_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             owner_id=user_id,
             bot_token=token,
             bot_username=bot_username,
-            bot_id=bot_id,
+            bot_name=bot_username,
         )
 
         # Start the clone
