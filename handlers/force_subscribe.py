@@ -79,8 +79,15 @@ async def verify_force_subscribe(update, context, chat_id):
             text += f"\u2022 {ch.get('title', 'Channel')}\n"
             if ch.get('url'):
                 buttons.append([InlineKeyboardButton(f"\U0001f4e2 Join {ch.get('title', '')}", url=ch['url'])])
+        text += '\nPlease join all channels above, then click verify.'
         buttons.append([InlineKeyboardButton('\u2705 I\'ve Joined \u2014 Verify', callback_data=f'verify_force_sub:{chat_id}')])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        try:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as e:
+            if 'not modified' in str(e).lower():
+                await query.answer('You still need to join all required channels!', show_alert=True)
+            else:
+                raise
 
 force_subscribe_conv_handler = None
 
