@@ -100,7 +100,8 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     if force_sub:
         buttons.append([InlineKeyboardButton('\u2699\ufe0f Force Sub Settings', callback_data=f'force_sub_settings:{chat_id}')])
     buttons.append([
-        InlineKeyboardButton(f'\U0001f4cb Pending Requests ({pending})', callback_data=f'pending_requests:{chat_id}'),
+        InlineKeyboardButton(f'\U0001f4cb Pending ({pending})', callback_data=f'pending_requests:{chat_id}'),
+        InlineKeyboardButton('\U0001f504 Sync Pending', callback_data=f'sync_pending:{chat_id}'),
     ])
     if pending > 0:
         buttons.append([
@@ -326,6 +327,44 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('verify_force_sub:'):
             chat_id = int(data.split(':')[1])
             await handle_verify_force_sub(query, context, db, chat_id, user_id)
+
+        elif data.startswith('sync_pending:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel or channel.get('owner_id') != user_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            await query.answer('Syncing pending requests from Telegram...', show_alert=False)
+            try:
+                import httpx
+                url = f'https://api.telegram.org/bot{context.bot.token}/getChatJoinRequests'
+                synced = 0
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=30)
+                    data_resp = response.json()
+                if data_resp.get('ok') and data_resp.get('result'):
+                    for req in data_resp['result']:
+                        u = req.get('user', {})
+                        uid = u.get('id')
+                        if uid:
+                            try:
+                                await db.save_join_request(
+                                    user_id=uid, chat_id=chat_id,
+                                    username=u.get('username'),
+                                    first_name=u.get('first_name'),
+                                    user_language=u.get('language_code'),
+                                )
+                                synced += 1
+                            except Exception:
+                                pass
+                pending_count = await db.get_pending_count(chat_id)
+                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
+                await query.answer(f'Synced! Found {synced} pending requests.', show_alert=True)
+            except Exception as e:
+                logger.error(f'Error syncing pending: {e}')
+                await query.answer(f'Sync failed: {str(e)[:100]}', show_alert=True)
+            await show_channel_settings(query, db, chat_id, user_id, context)
+
 
         elif data.startswith('batch_approve:'):
             chat_id = int(data.split(':')[1])
