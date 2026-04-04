@@ -1,221 +1,229 @@
 import logging
-import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
-from utils.decorators import channel_owner_only, premium_required
+from telegram.ext import (
+    ContextTypes,
+    ConversationHandler,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+)
 
 logger = logging.getLogger(__name__)
 
-WAITING_TOKEN = 1
+# Conversation states
+CLONE_TOKEN = 0
+CLONE_CONFIRM = 1
 
 
-async def show_clone_menu(update, context):
-    query = update.callback_query
-    user_id = query.from_user.id
+async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point: /clone command."""
     db = context.application.bot_data.get('db')
+    if not db:
+        await update.message.reply_text('Bot is initializing, try again later.')
+        return ConversationHandler.END
+
+    user_id = update.effective_user.id
     owner = await db.get_owner(user_id)
-    clones = await db.get_owner_clones(user_id)
-
-    text = '\U0001f9ec BOT CLONING\n\n'
-    if clones:
-        for clone in clones:
-            status = '\U0001f7e2 Active' if clone['is_active'] else '\U0001f534 Inactive'
-            text += (f"\U0001f916 @{clone['bot_username'] or 'Unknown'}\n"
-                     f"   Status: {status}\n"
-                     f"   Errors: {clone.get('error_count', 0)}\n"
-                     f"   Created: {str(clone.get('created_at', ''))[:10]}\n\n")
-        buttons = []
-        for clone in clones:
-            cid = clone['clone_id']
-            if clone['is_active']:
-                buttons.append([InlineKeyboardButton(f"\u23f8\ufe0f Pause @{clone['bot_username']}", callback_data=f'pause_clone:{cid}')])
-            else:
-                buttons.append([InlineKeyboardButton(f"\u25b6\ufe0f Activate @{clone['bot_username']}", callback_data=f'activate_clone:{cid}')])
-            buttons.append([InlineKeyboardButton(f"\U0001f5d1\ufe0f Delete @{clone['bot_username']}", callback_data=f'delete_clone:{cid}')])
-    else:
-        text += ('Create your own branded version of this bot!\n\n'
-                 'Your clone will have:\n'
-                 '\u2705 Auto-approve join requests\n'
-                 '\u2705 Custom welcome DMs\n'
-                 '\u2705 Analytics dashboard\n'
-                 '\u2705 Broadcast to users\n'
-                 '\u2705 Your branding\n\n'
-                 'How to create:\n'
-                 '1. Open @BotFather\n'
-                 '2. Create a new bot (/newbot)\n'
-                 '3. Copy the token\n'
-                 '4. Click Send Bot Token below\n')
-        buttons = []
-
-    tier = owner['tier'] if owner else 'free'
-    max_clones = {'free': 0, 'premium': 1, 'business': 5}.get(tier, 0)
-    current_count = len(clones) if clones else 0
-
-    if current_count < max_clones:
-        buttons.append([InlineKeyboardButton('\U0001f4cb Send Bot Token', callback_data='clone_send_token')])
-    elif tier == 'free':
-        buttons.append([InlineKeyboardButton('\U0001f48e Upgrade to Clone', callback_data='premium_info')])
-
-    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-
-async def prompt_clone_token(update, context):
-    query = update.callback_query
-    user_id = query.from_user.id
-    db = context.application.bot_data.get('db')
-    owner = await db.get_owner(user_id)
-    tier = owner['tier'] if owner else 'free'
-    if tier == 'free':
-        await query.edit_message_text(
-            '\U0001f512 Bot cloning requires Premium or Business plan.',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('\U0001f48e Upgrade', callback_data='premium_info')],
-                [InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]
-            ])
+    if not owner:
+        await update.message.reply_text(
+            'You need to be a registered channel owner first.\n'
+            'Add this bot as admin to your channel.'
         )
         return ConversationHandler.END
 
-    context.user_data['awaiting_clone_token'] = True
-    await query.edit_message_text(
-        '\U0001f916 Send me the bot token from @BotFather.\n\n'
-        'Format: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n\n'
-        'Type /cancel to cancel.',
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('\u274c Cancel', callback_data='clone_bot_menu')]
-        ])
-    )
-    return WAITING_TOKEN
+    # Check clone limits
+    tier = owner.get('tier', 'free')
+    existing_clones = await db.get_user_clones(user_id)
+    clone_count = len(existing_clones) if existing_clones else 0
 
+    limits = {'free': 1, 'basic': 3, 'pro': 10, 'enterprise': 50}
+    max_clones = limits.get(tier, 1)
 
-async def receive_clone_token(update, context):
-    token = update.message.text.strip()
-    user_id = update.effective_user.id
-    db = context.application.bot_data.get('db')
-
-    # Validate token
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f'https://api.telegram.org/bot{token}/getMe', timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                data = await resp.json()
-                if not data.get('ok'):
-                    await update.message.reply_text(
-                        '\u274c Invalid token. Please check and resend.',
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]
-                        ])
-                    )
-                    return ConversationHandler.END
-                bot_info = data['result']
-    except Exception as e:
-        logger.error(f'Token validation error: {e}')
-        await update.message.reply_text('\u274c Could not validate token. Try again later.')
+    if clone_count >= max_clones:
+        await update.message.reply_text(
+            f'You have reached your clone limit ({clone_count}/{max_clones}).\n'
+            f'Upgrade your plan for more clones.'
+        )
         return ConversationHandler.END
 
+    await update.message.reply_text(
+        '\U0001f916 CREATE CLONE BOT\n\n'
+        'To create a clone, you need a bot token from @BotFather.\n\n'
+        'Steps:\n'
+        '1. Go to @BotFather\n'
+        '2. Send /newbot\n'
+        '3. Follow the steps to create a new bot\n'
+        '4. Copy the bot token and send it here\n\n'
+        f'Clones used: {clone_count}/{max_clones}\n\n'
+        'Send the bot token now, or /cancel to abort.',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('\u274c Cancel', callback_data='clone_cancel')]
+        ])
+    )
+    return CLONE_TOKEN
+
+
+async def clone_receive_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive and validate the bot token."""
+    token = update.message.text.strip()
+
+    # Basic token format validation
+    if ':' not in token or len(token) < 30:
+        await update.message.reply_text(
+            'That does not look like a valid bot token.\n'
+            'It should look like: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ\n\n'
+            'Try again or /cancel'
+        )
+        return CLONE_TOKEN
+
+    # Test the token
+    from telegram import Bot
+    try:
+        test_bot = Bot(token=token)
+        bot_info = await test_bot.get_me()
+    except Exception as e:
+        await update.message.reply_text(
+            f'Invalid token. Could not connect to Telegram API.\n'
+            f'Error: {str(e)[:100]}\n\n'
+            f'Try again or /cancel'
+        )
+        return CLONE_TOKEN
+
     # Check if token already registered
+    db = context.application.bot_data.get('db')
     existing = await db.get_clone_by_token(token)
     if existing:
         await update.message.reply_text(
-            '\u274c This bot token is already registered.',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]
-            ])
+            f'This bot (@{bot_info.username}) is already registered as a clone.\n'
+            'Use a different bot token or /cancel'
         )
-        return ConversationHandler.END
+        return CLONE_TOKEN
 
-    # Save clone
-    clone_id = await db.create_clone(
-        owner_id=user_id,
-        bot_token=token,
-        bot_user_id=bot_info['id'],
-        bot_username=bot_info.get('username', ''),
-        bot_first_name=bot_info.get('first_name', ''),
-    )
+    # Store in context for confirmation
+    context.user_data['clone_token'] = token
+    context.user_data['clone_bot_username'] = bot_info.username
+    context.user_data['clone_bot_id'] = bot_info.id
 
     await update.message.reply_text(
-        f"\U0001f916 Bot Found!\n"
-        f"Name: {bot_info.get('first_name', '')}\n"
-        f"Username: @{bot_info.get('username', '')}\n\n"
-        f"Click Activate to start your clone.",
+        f'\u2705 Token verified!\n\n'
+        f'Bot: @{bot_info.username}\n'
+        f'Bot ID: {bot_info.id}\n\n'
+        f'This clone will handle join requests for your channels '
+        f'using the same settings as the main bot.\n\n'
+        f'Confirm creation?',
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('\u2705 Activate Clone', callback_data=f'activate_clone:{clone_id}')],
-            [InlineKeyboardButton('\u274c Cancel', callback_data='clone_bot_menu')]
+            [InlineKeyboardButton('\u2705 Create Clone', callback_data='clone_confirm'),
+             InlineKeyboardButton('\u274c Cancel', callback_data='clone_cancel')]
         ])
     )
+    return CLONE_CONFIRM
+
+
+async def clone_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirm and create the clone."""
+    query = update.callback_query
+    await query.answer()
+
+    token = context.user_data.get('clone_token')
+    bot_username = context.user_data.get('clone_bot_username')
+    bot_id = context.user_data.get('clone_bot_id')
+    user_id = query.from_user.id
+
+    if not token:
+        await query.edit_message_text('Session expired. Use /clone to start again.')
+        return ConversationHandler.END
+
+    db = context.application.bot_data.get('db')
+
+    try:
+        # Create clone in database
+        clone_id = await db.create_clone(
+            owner_id=user_id,
+            bot_token=token,
+            bot_username=bot_username,
+            bot_id=bot_id,
+        )
+
+        # Start the clone
+        clone_mgr = context.application.bot_data.get('clone_manager')
+        if clone_mgr:
+            try:
+                await clone_mgr.start_clone(clone_id, token, user_id)
+                status_text = '\u2705 Clone is now ACTIVE and handling join requests!'
+            except Exception as e:
+                logger.error(f'Failed to start clone {clone_id}: {e}')
+                status_text = (f'\u26a0\ufe0f Clone created but failed to start: {str(e)[:100]}\n'
+                              f'You can try activating it from the dashboard.')
+        else:
+            status_text = '\u26a0\ufe0f Clone created but clone manager not available. Restart may be needed.'
+
+        await query.edit_message_text(
+            f'\U0001f916 CLONE CREATED\n\n'
+            f'Bot: @{bot_username}\n'
+            f'Clone ID: {clone_id}\n\n'
+            f'{status_text}\n\n'
+            f'Important: Make sure to add @{bot_username} as admin '
+            f'to the channels you want it to manage.',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='admin_panel')]
+            ])
+        )
+
+    except Exception as e:
+        logger.exception(f'Error creating clone: {e}')
+        await query.edit_message_text(
+            f'\u274c Failed to create clone: {str(e)[:200]}\n\n'
+            f'Please try again with /clone',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='admin_panel')]
+            ])
+        )
+
+    # Clean up
+    context.user_data.pop('clone_token', None)
+    context.user_data.pop('clone_bot_username', None)
+    context.user_data.pop('clone_bot_id', None)
+
     return ConversationHandler.END
 
 
-async def activate_clone(update, context, clone_id):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    clone_manager = context.application.bot_data.get('clone_manager')
+async def clone_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel clone creation."""
+    context.user_data.pop('clone_token', None)
+    context.user_data.pop('clone_bot_username', None)
+    context.user_data.pop('clone_bot_id', None)
 
-    clone = await db.get_clone(clone_id)
-    if not clone:
-        await query.edit_message_text('Clone not found.')
-        return
-
-    try:
-        await clone_manager.start_clone(clone_id, clone['bot_token'], clone['owner_id'])
-        await db.update_clone_status(clone_id, is_active=True)
-        await query.edit_message_text(
-            f"\u2705 Clone Activated!\n\n"
-            f"Your bot @{clone['bot_username']} is now live!\n\n"
-            f"\u2022 Add it as admin to your channels\n"
-            f"\u2022 It will handle join requests automatically\n"
-            f"\u2022 Manage it from this dashboard",
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            'Clone creation cancelled.',
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]
+                [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='admin_panel')]
             ])
         )
-    except Exception as e:
-        logger.exception(f'Failed to activate clone {clone_id}: {e}')
-        await query.edit_message_text(
-            f'\u274c Failed to activate clone: {str(e)[:100]}',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]
-            ])
-        )
+    else:
+        await update.message.reply_text('Clone creation cancelled.')
 
-
-async def pause_clone(update, context, clone_id):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    clone_manager = context.application.bot_data.get('clone_manager')
-    try:
-        await clone_manager.stop_clone(clone_id)
-        await db.update_clone_status(clone_id, is_active=False)
-        await query.edit_message_text('\u23f8\ufe0f Clone paused.',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]]))
-    except Exception as e:
-        logger.error(f'Error pausing clone: {e}')
-
-
-async def delete_clone(update, context, clone_id):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    clone_manager = context.application.bot_data.get('clone_manager')
-    try:
-        await clone_manager.stop_clone(clone_id)
-        await db.delete_clone(clone_id)
-        await query.edit_message_text('\U0001f5d1\ufe0f Clone deleted.',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='clone_bot_menu')]]))
-    except Exception as e:
-        logger.error(f'Error deleting clone: {e}')
-
-
-async def cancel_clone(update, context):
-    context.user_data.pop('awaiting_clone_token', None)
-    await update.message.reply_text('Clone setup cancelled.')
     return ConversationHandler.END
 
 
+# ConversationHandler for clone creation
 clone_conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(prompt_clone_token, pattern='^clone_send_token$')],
+    entry_points=[CommandHandler('clone', clone_command)],
     states={
-        WAITING_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_clone_token)],
+        CLONE_TOKEN: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, clone_receive_token),
+            CallbackQueryHandler(clone_cancel, pattern='^clone_cancel$'),
+        ],
+        CLONE_CONFIRM: [
+            CallbackQueryHandler(clone_confirm, pattern='^clone_confirm$'),
+            CallbackQueryHandler(clone_cancel, pattern='^clone_cancel$'),
+        ],
     },
-    fallbacks=[MessageHandler(filters.COMMAND, cancel_clone)],
-    per_user=True,
-    per_chat=True,
+    fallbacks=[
+        CommandHandler('cancel', clone_cancel),
+        CallbackQueryHandler(clone_cancel, pattern='^clone_cancel$'),
+    ],
+    per_message=False,
 )
