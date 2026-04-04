@@ -1,138 +1,104 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
-from services.watermark_service import get_watermark
+from telegram.ext import (
+    ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
+)
 
 logger = logging.getLogger(__name__)
 
-WAITING_MESSAGE = 1
+EDITING_WELCOME = 0
 
 
-async def start_welcome_edit(update, context, chat_id):
+async def edit_welcome_start(update, context):
     query = update.callback_query
-    user_id = query.from_user.id
+    await query.answer()
+    data = query.data
+    if ':' in data:
+        chat_id = int(data.split(':')[1])
+    else:
+        chat_id = context.user_data.get('editing_welcome_for')
+    if not chat_id:
+        await query.edit_message_text('Error: No channel selected.')
+        return ConversationHandler.END
+    context.user_data['editing_welcome_for'] = chat_id
     db = context.application.bot_data.get('db')
     channel = await db.get_channel(chat_id)
-    if not channel or channel['owner_id'] != user_id:
-        await query.answer('Unauthorized', show_alert=True)
-        return
-    context.user_data['editing_welcome_for'] = chat_id
-    current = channel.get('welcome_message', 'Welcome to {channel_name}!')
-    text = (
-        f'\U0001f4ac EDIT WELCOME DM\nChannel: {channel["chat_title"]}\n\n'
-        f'Current message:\n{current}\n\n'
-        f'Available variables:\n'
-        '{first_name} - User\'s first name\n'
-        '{last_name} - User\'s last name\n'
-        '{username} - User\'s @username\n'
-        '{user_id} - User\'s ID\n'
-        '{channel_name} - Channel title\n'
-        '{channel_username} - @channel\n'
-        '{member_count} - Member count\n'
-        '{referral_link} - Referral link\n'
-        '{coins} - Coin balance\n'
-        '{date} - Today\'s date\n\n'
-        'Send your new welcome message now.\n'
-        'You can also send a photo/video with caption.\n'
-        'Type /cancel to cancel.'
+    current_msg = channel.get('welcome_message', 'Not set') if channel else 'Not set'
+    await query.edit_message_text(
+        f'Current welcome message:\n\n{current_msg}\n\n'
+        f'Send the new welcome message.\n'
+        f'Available variables: {{name}}, {{username}}, {{channel}}\n\n'
+        f'Send /cancel to cancel.',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='cancel_edit_welcome')]])
     )
-    await query.edit_message_text(text)
-    return WAITING_MESSAGE
+    return EDITING_WELCOME
 
 
-async def receive_welcome_message(update, context):
+async def edit_welcome_receive(update, context):
     chat_id = context.user_data.get('editing_welcome_for')
     if not chat_id:
-        await update.message.reply_text('No channel selected. Use /dashboard.')
+        await update.message.reply_text('Error: No channel context. Please try again from the channel menu.')
+        return ConversationHandler.END
+    new_message = update.message.text
+    if new_message == '/cancel':
+        await update.message.reply_text('Cancelled.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back to Dashboard', callback_data='dashboard')]]))
         return ConversationHandler.END
     db = context.application.bot_data.get('db')
-    msg = update.message
-    if msg.text:
-        await db.update_channel_setting(chat_id, 'welcome_message', msg.text)
-        await db.update_channel_setting(chat_id, 'welcome_media_type', None)
-        await db.update_channel_setting(chat_id, 'welcome_media_file_id', None)
-    elif msg.photo:
-        caption = msg.caption or ''
-        await db.update_channel_setting(chat_id, 'welcome_message', caption)
-        await db.update_channel_setting(chat_id, 'welcome_media_type', 'photo')
-        await db.update_channel_setting(chat_id, 'welcome_media_file_id', msg.photo[-1].file_id)
-    elif msg.video:
-        caption = msg.caption or ''
-        await db.update_channel_setting(chat_id, 'welcome_message', caption)
-        await db.update_channel_setting(chat_id, 'welcome_media_type', 'video')
-        await db.update_channel_setting(chat_id, 'welcome_media_file_id', msg.video.file_id)
-    elif msg.animation:
-        caption = msg.caption or ''
-        await db.update_channel_setting(chat_id, 'welcome_message', caption)
-        await db.update_channel_setting(chat_id, 'welcome_media_type', 'animation')
-        await db.update_channel_setting(chat_id, 'welcome_media_file_id', msg.animation.file_id)
-    elif msg.document:
-        caption = msg.caption or ''
-        await db.update_channel_setting(chat_id, 'welcome_message', caption)
-        await db.update_channel_setting(chat_id, 'welcome_media_type', 'document')
-        await db.update_channel_setting(chat_id, 'welcome_media_file_id', msg.document.file_id)
-    else:
-        await msg.reply_text('Unsupported format. Send text, photo, video, or document.')
-        return WAITING_MESSAGE
-    await msg.reply_text(
-        '\u2705 Welcome message updated!',
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('\U0001f441 Preview', callback_data=f'preview_welcome:{chat_id}')],
-            [InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')]
-        ])
-    )
-    context.user_data.pop('editing_welcome_for', None)
-    return ConversationHandler.END
-
-
-async def preview_welcome(update, context, chat_id):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    channel = await db.get_channel(chat_id)
-    if not channel:
-        return
-    user = query.from_user
-    import config
-    text = channel.get('welcome_message', 'Welcome!')
-    text = text.replace('{first_name}', user.first_name or 'there')
-    text = text.replace('{last_name}', user.last_name or '')
-    text = text.replace('{username}', f'@{user.username}' if user.username else 'there')
-    text = text.replace('{user_id}', str(user.id))
-    text = text.replace('{channel_name}', channel.get('chat_title', ''))
-    text = text.replace('{channel_username}', f'@{channel.get("chat_username", "")}' if channel.get('chat_username') else '')
-    text = text.replace('{member_count}', str(channel.get('member_count', 0)))
-    text = text.replace('{referral_link}', f'https://t.me/{config.BOT_USERNAME}?start=ref_{user.id}')
-    text = text.replace('{coins}', '0')
-    from datetime import datetime
-    text = text.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
-    watermark = await get_watermark(db, chat_id)
-    text += watermark
-    media_type = channel.get('welcome_media_type')
-    media_fid = channel.get('welcome_media_file_id')
     try:
-        if media_type == 'photo' and media_fid:
-            await context.bot.send_photo(user.id, media_fid, caption=text, parse_mode='HTML')
-        elif media_type == 'video' and media_fid:
-            await context.bot.send_video(user.id, media_fid, caption=text, parse_mode='HTML')
-        elif media_type == 'animation' and media_fid:
-            await context.bot.send_animation(user.id, media_fid, caption=text, parse_mode='HTML')
-        elif media_type == 'document' and media_fid:
-            await context.bot.send_document(user.id, media_fid, caption=text, parse_mode='HTML')
-        else:
-            await context.bot.send_message(user.id, f'\U0001f441 PREVIEW:\n\n{text}', parse_mode='HTML')
+        await db.update_channel_setting(chat_id, 'welcome_message', new_message)
+        await update.message.reply_text(
+            f'\u2705 Welcome message updated!\n\nNew message:\n{new_message}',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('Back to Channel', callback_data=f'manage_channel:{chat_id}')],
+                [InlineKeyboardButton('Back to Dashboard', callback_data='dashboard')]
+            ])
+        )
     except Exception as e:
-        await query.answer(f'Preview error: {str(e)[:50]}', show_alert=True)
-
-
-async def cancel_welcome(update, context):
-    context.user_data.pop('editing_welcome_for', None)
-    await update.message.reply_text('Cancelled.')
+        logger.error(f'Failed to update welcome message: {e}')
+        await update.message.reply_text(
+            f'\u274c Failed to update welcome message: {e}',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back to Dashboard', callback_data='dashboard')]])
+        )
     return ConversationHandler.END
+
+
+async def cancel_edit_welcome(update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop('editing_welcome_for', None)
+    await query.edit_message_text('Cancelled.',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back to Dashboard', callback_data='dashboard')]]))
+    return ConversationHandler.END
+
+
+def _extract_chat_id_from_callback(update):
+    if update.callback_query and update.callback_query.data:
+        data = update.callback_query.data
+        if ':' in data:
+            try:
+                return int(data.split(':')[1])
+            except (ValueError, IndexError):
+                pass
+    return None
 
 
 welcome_dm_conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(lambda u, c: start_welcome_edit(u, c, c.user_data.get('editing_welcome_for')), pattern='^edit_welcome:')],
-    states={WAITING_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND, receive_welcome_message)]},
-    fallbacks=[MessageHandler(filters.Regex('^/cancel$'), cancel_welcome)],
-    per_user=True, per_chat=True,
+    entry_points=[
+        CallbackQueryHandler(
+            edit_welcome_start,
+            pattern=r'^edit_welcome:'
+        )
+    ],
+    states={
+        EDITING_WELCOME: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, edit_welcome_receive),
+            CallbackQueryHandler(cancel_edit_welcome, pattern='^cancel_edit_welcome$'),
+        ],
+    },
+    fallbacks=[
+        CallbackQueryHandler(cancel_edit_welcome, pattern='^cancel_edit_welcome$'),
+        MessageHandler(filters.COMMAND, cancel_edit_welcome),
+    ],
+    per_message=False,
 )
