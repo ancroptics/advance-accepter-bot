@@ -363,7 +363,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f'Error syncing pending: {e}')
                 await query.answer(f'Sync failed: {str(e)[:100]}', show_alert=True)
-            await show_channel_settings(query, db, chat_id, user_id, context)
+            try:
+                await show_channel_settings(query, db, chat_id, user_id, context)
+            except Exception as e:
+                if 'not modified' not in str(e).lower():
+                    raise
 
 
         elif data.startswith('batch_approve:'):
