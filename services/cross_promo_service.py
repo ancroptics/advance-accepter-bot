@@ -1,27 +1,31 @@
+from database.models import get_cross_promo_channel
+from database.connection import DatabasePool
 import logging
 import random
 
 logger = logging.getLogger(__name__)
 
 
-async def get_cross_promo_text(db, chat_id, owner_id):
+async def get_promo_for_channel(db: DatabasePool, owner_id: int):
     try:
-        channel = await db.get_channel(chat_id)
-        if not channel or not channel.get('cross_promo_enabled'):
+        channels = await get_cross_promo_channel(db, owner_id)
+        if not channels:
             return None
-        category = channel.get('cross_promo_category')
-        if not category:
-            return None
-        candidates = await db.get_cross_promo_candidates(category, chat_id, owner_id)
-        if not candidates:
-            return None
-        chosen = random.choice(candidates)
-        promo_text = chosen.get('cross_promo_text', '')
-        promo_username = chosen.get('chat_username', '')
-        if not promo_username:
-            return None
-        await db.log_cross_promo(chat_id, chosen['chat_id'])
-        return f'\n\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\U0001f4e2 {promo_text}\n\U0001f449 @{promo_username}'
+        promo = random.choice(channels)
+        return {
+            'channel_id': promo['channel_id'],
+            'channel_name': promo['channel_name'],
+            'description': promo.get('promo_text', ''),
+        }
     except Exception as e:
-        logger.error(f'Cross-promo error: {e}')
+        logger.error(f'Cross promo error: {e}')
         return None
+
+
+async def format_promo_message(promo: dict) -> str:
+    if not promo:
+        return ''
+    name = promo.get('channel_name', 'Partner Channel')
+    desc = promo.get('description', 'Check out our partner!')
+    cid = promo.get('channel_id', '')
+    return f"\n\n📢 *{name}*\n{desc}\n👉 [Join Now](https://t.me/{cid})"
