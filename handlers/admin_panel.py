@@ -38,7 +38,6 @@ async def show_dashboard(update, context, edit=False):
             text += (f"\U0001f4e2 {ch['chat_title']}\n"
                      f"   \U0001f465 {ch.get('member_count', 0)} | \U0001f4cb {ch.get('pending_requests', 0)} pending\n"
                      f"   {auto}\n\n")
-            buttons.append([InlineKeyboardButton(f"\u2699\ufe0f Manage {ch['chat_title'][:20]}", callback_data=f"manage_channel:{ch['chat_id']}")])        
     else:
         text += 'No channels yet. Add the bot as admin to a channel!\n\n'
     buttons.extend([
