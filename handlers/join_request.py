@@ -248,7 +248,18 @@ async def _approve_and_dm(join_request, user, chat, channel, db, context):
 
         except Exception as e:
             err_str = str(e).lower()
-            if 'forbidden' in err_str or 'blocked' in err_str or 'chat not found' in err_str:
+            if "can't parse" in err_str or 'parse entities' in err_str:
+                # HTML parse error - retry without parse_mode
+                try:
+                    sent_msg = await context.bot.send_message(
+                        user_id, welcome_text, reply_markup=reply_markup
+                    )
+                    dm_sent = True
+                    dm_message_id = sent_msg.message_id if sent_msg else None
+                except Exception as e2:
+                    logger.warning(f'Welcome DM retry without HTML also failed: {e2}')
+                    dm_failed_reason = 'error'
+            elif 'forbidden' in err_str or 'blocked' in err_str or 'chat not found' in err_str:
                 dm_failed_reason = 'blocked'
                 await db.mark_user_blocked(user_id)
             else:
