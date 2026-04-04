@@ -130,18 +130,3 @@ class SchedulerService:
 
         except Exception as e:
             logger.error(f'Error in _sync_pending_from_telegram: {e}')
-
-                    # Update pending count
-                    pending_count = await db.get_pending_count(chat_id)
-                    await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
-
-                    await asyncio.sleep(1)  # Rate limit between channels
-                except Exception as e:
-                    if 'chat_admin_required' not in str(e).lower():
-                        logger.warning(f'Error syncing pending for {chat_id}: {e}')
-
-            if total_synced > 0:
-                logger.info(f'Synced {total_synced} pending requests from Telegram')
-
-        except Exception as e:
-            logger.error(f'Error in _sync_pending_from_telegram: {e}')
