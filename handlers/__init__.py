@@ -12,7 +12,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-
 def register_handlers(application):
     """Register all bot handlers."""
     from handlers.admin_panel import dashboard_handler, channels_handler, superadmin_handler
@@ -35,7 +34,11 @@ def register_handlers(application):
     # 3. Join request handler
     application.add_handler(ChatJoinRequestHandler(join_request_handler))
 
-    # 4. Force sub channel input conversation handler
+    # 4. Clone bot conversation handler
+    from handlers.clone_bot import clone_conv_handler
+    application.add_handler(clone_conv_handler)
+
+    # 5. Force sub channel input conversation handler
     from handlers.force_subscribe import handle_force_sub_channel_input, start_add_force_sub_channel, FORCE_SUB_INPUT
 
     async def force_sub_entry(update, context):
@@ -57,14 +60,13 @@ def register_handlers(application):
     )
     application.add_handler(force_sub_conv)
 
-    # 5. Callback query handler (catch-all for buttons)
+    # 6. Callback query handler (catch-all for buttons)
     application.add_handler(CallbackQueryHandler(callback_router))
 
-    # 6. Fallback message handler
+    # 7. Fallback message handler
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
     logger.info('All handlers registered.')
-
 
 async def handle_text_input(update, context):
     """Handle text inputs for various conversation states."""
@@ -129,7 +131,6 @@ async def handle_text_input(update, context):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
         )
         return
-
 
 # Alias for bot.py import
 register_all_handlers = register_handlers
