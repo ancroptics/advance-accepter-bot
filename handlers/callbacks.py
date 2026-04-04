@@ -334,40 +334,60 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not channel or channel.get('owner_id') != user_id:
                 await query.answer('Access denied', show_alert=True)
                 return
-            await query.answer('Syncing pending requests from Telegram...', show_alert=False)
+            await query.answer('Syncing pending requests...', show_alert=False)
             try:
-                import aiohttp
-                url = f'https://api.telegram.org/bot{context.bot.token}/getChatJoinRequests'
-                synced = 0
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                        data_resp = await response.json()
-                if data_resp.get('ok') and data_resp.get('result'):
-                    for req in data_resp['result']:
-                        u = req.get('user', {})
-                        uid = u.get('id')
-                        if uid:
-                            try:
-                                await db.save_join_request(
-                                    user_id=uid, chat_id=chat_id,
-                                    username=u.get('username'),
-                                    first_name=u.get('first_name'),
-                                    user_language=u.get('language_code'),
-                                )
-                                synced += 1
-                            except Exception:
-                                pass
-                pending_count = await db.get_pending_count(chat_id)
-                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
-                await query.answer(f'Synced! Found {synced} pending requests.', show_alert=True)
+                # Get real pending count from Telegram
+                chat_info = await context.bot.get_chat(chat_id)
+                telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
+
+                # Get our DB pending count
+                db_pending = await db.get_pending_count(chat_id)
+
+                # Update stored count with Telegram's real number
+                await db.update_channel_setting(chat_id, 'pending_requests', telegram_pending)
+
+                msg = (f'\u2705 Sync Complete!\n\n'
+                       f'\U0001f4ca Telegram pending: {telegram_pending}\n'
+                       f'\U0001f4be Tracked in DB: {db_pending}\n\n')
+
+                if telegram_pending > db_pending:
+                    diff = telegram_pending - db_pending
+                    msg += (f'\u26a0\ufe0f {diff} request(s) were made before the bot became admin '
+                            f'and are not in our database.\n\n'
+                            f'\U0001f4a1 These old requests can only be approved from the '
+                            f'Telegram app (Channel Settings \u2192 Recent Actions \u2192 Join Requests).\n\n'
+                            f'All NEW requests will be detected and managed automatically!')
+                elif telegram_pending == 0 and db_pending == 0:
+                    msg += '\U0001f389 No pending requests!'
+                elif telegram_pending == 0 and db_pending > 0:
+                    msg += ('\U0001f504 Cleaning up stale DB records...\n'
+                            'Some tracked requests may have been approved/declined externally.')
+                    # Clean up stale DB records
+                    try:
+                        await db.cleanup_stale_pending(chat_id)
+                    except Exception:
+                        pass
+                else:
+                    msg += '\u2705 All pending requests are tracked!'
+
+                if db_pending > 0:
+                    msg += f'\n\n\U0001f4cb Use the buttons below to manage {db_pending} tracked request(s):'
+
+                buttons = []
+                if db_pending > 0:
+                    buttons.append([
+                        InlineKeyboardButton(f'\u2705 Approve All ({db_pending})', callback_data=f'batch_approve:{chat_id}'),
+                        InlineKeyboardButton(f'\u274c Decline All ({db_pending})', callback_data=f'decline_all:{chat_id}'),
+                    ])
+                buttons.append([
+                    InlineKeyboardButton('\U0001f504 Refresh', callback_data=f'sync_pending:{chat_id}'),
+                    InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}'),
+                ])
+
+                await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(buttons))
             except Exception as e:
                 logger.error(f'Error syncing pending: {e}')
                 await query.answer(f'Sync failed: {str(e)[:100]}', show_alert=True)
-            try:
-                await show_channel_settings(query, db, chat_id, user_id, context)
-            except Exception as e:
-                if 'not modified' not in str(e).lower():
-                    raise
 
 
         elif data.startswith('batch_approve:'):
