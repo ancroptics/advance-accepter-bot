@@ -144,9 +144,10 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     )
                     await db.update_join_request_force_sub(user_id, chat_id, True)
                 except Exception as e:
-                    logger.warning(f'Could not send force sub DM: {e}')
-                    # Still approve if DM fails
-                    await _approve_and_dm(join_request, user, chat, channel, db, context)
+                    logger.warning(f'Could not send force sub DM to {user_id}: {e}')
+                    # Don't approve - user hasn't started bot and hasn't joined force sub channels
+                    # The 24h auto-approve scheduler will handle this
+                    await db.update_join_request_force_sub(user_id, chat_id, True)
                 return
 
         # Step 5 & 6: Send welcome DM then approve
@@ -199,9 +200,10 @@ async def _approve_and_dm(join_request, user, chat, channel, db, context):
             welcome_text += watermark
 
             # Add cross-promotion
-            cross_promo = await get_cross_promo_text(db, chat_id, channel.get('owner_id'))
-            if cross_promo:
-                welcome_text += cross_promo
+            if config.ENABLE_CROSS_PROMO:
+                cross_promo = await get_cross_promo_text(db, chat_id, channel.get('owner_id'))
+                if cross_promo:
+                    welcome_text += cross_promo
 
             # Build inline buttons
             reply_markup = None
@@ -222,58 +224,68 @@ async def _approve_and_dm(join_request, user, chat, channel, db, context):
                 except Exception as e:
                     logger.warning(f'Error building welcome buttons: {e}')
 
-            # Send the DM
+            # Send the DM - try with HTML first, fallback to plain text
             media_type = channel.get('welcome_media_type')
             media_fid = channel.get('welcome_media_file_id')
             sent_msg = None
 
-            if media_type == 'photo' and media_fid:
-                sent_msg = await context.bot.send_photo(
-                    user_id, media_fid, caption=welcome_text,
-                    parse_mode='HTML', reply_markup=reply_markup
-                )
-            elif media_type == 'video' and media_fid:
-                sent_msg = await context.bot.send_video(
-                    user_id, media_fid, caption=welcome_text,
-                    parse_mode='HTML', reply_markup=reply_markup
-                )
-            elif media_type == 'animation' and media_fid:
-                sent_msg = await context.bot.send_animation(
-                    user_id, media_fid, caption=welcome_text,
-                    parse_mode='HTML', reply_markup=reply_markup
-                )
-            elif media_type == 'document' and media_fid:
-                sent_msg = await context.bot.send_document(
-                    user_id, media_fid, caption=welcome_text,
-                    parse_mode='HTML', reply_markup=reply_markup
-                )
-            else:
-                sent_msg = await context.bot.send_message(
-                    user_id, welcome_text,
-                    parse_mode='HTML', reply_markup=reply_markup
-                )
+            async def _send_dm(parse_mode_val):
+                """Helper to send DM with given parse mode."""
+                nonlocal sent_msg
+                if media_type == 'photo' and media_fid:
+                    sent_msg = await context.bot.send_photo(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                elif media_type == 'video' and media_fid:
+                    sent_msg = await context.bot.send_video(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                elif media_type == 'animation' and media_fid:
+                    sent_msg = await context.bot.send_animation(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                elif media_type == 'document' and media_fid:
+                    sent_msg = await context.bot.send_document(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                else:
+                    sent_msg = await context.bot.send_message(
+                        user_id, welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
 
-            dm_sent = True
-            dm_message_id = sent_msg.message_id if sent_msg else None
+            try:
+                await _send_dm('HTML')
+                dm_sent = True
+                dm_message_id = sent_msg.message_id if sent_msg else None
+            except Exception as e1:
+                err_str = str(e1).lower()
+                if "can't parse" in err_str or 'parse entities' in err_str or 'bad request' in err_str:
+                    # HTML parse error - retry without parse_mode
+                    try:
+                        await _send_dm(None)
+                        dm_sent = True
+                        dm_message_id = sent_msg.message_id if sent_msg else None
+                    except Exception as e2:
+                        logger.warning(f'Welcome DM retry without HTML also failed to {user_id}: {e2}')
+                        dm_failed_reason = 'error'
+                elif 'forbidden' in err_str or 'blocked' in err_str or 'chat not found' in err_str:
+                    dm_failed_reason = 'blocked'
+                    try:
+                        await db.mark_user_blocked(user_id)
+                    except Exception:
+                        pass
+                else:
+                    dm_failed_reason = str(e1)[:200]
+                if not dm_sent:
+                    logger.warning(f'DM failed to {user_id}: {e1}')
 
         except Exception as e:
-            err_str = str(e).lower()
-            if "can't parse" in err_str or 'parse entities' in err_str:
-                # HTML parse error - retry without parse_mode
-                try:
-                    sent_msg = await context.bot.send_message(
-                        user_id, welcome_text, reply_markup=reply_markup
-                    )
-                    dm_sent = True
-                    dm_message_id = sent_msg.message_id if sent_msg else None
-                except Exception as e2:
-                    logger.warning(f'Welcome DM retry without HTML also failed: {e2}')
-                    dm_failed_reason = 'error'
-            elif 'forbidden' in err_str or 'blocked' in err_str or 'chat not found' in err_str:
-                dm_failed_reason = 'blocked'
-                await db.mark_user_blocked(user_id)
-            else:
-                dm_failed_reason = str(e)[:200]
+            dm_failed_reason = str(e)[:200]
             logger.warning(f'DM failed to {user_id}: {e}')
 
     # Step 6: Approve the join request
