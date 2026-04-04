@@ -336,12 +336,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await query.answer('Syncing pending requests from Telegram...', show_alert=False)
             try:
-                import httpx
+                import aiohttp
                 url = f'https://api.telegram.org/bot{context.bot.token}/getChatJoinRequests'
                 synced = 0
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=30)
-                    data_resp = response.json()
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                        data_resp = await response.json()
                 if data_resp.get('ok') and data_resp.get('result'):
                     for req in data_resp['result']:
                         u = req.get('user', {})
