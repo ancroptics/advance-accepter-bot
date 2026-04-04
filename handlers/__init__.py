@@ -1,3 +1,4 @@
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -77,5 +78,19 @@ def register_all_handlers(application: Application):
 
 
 async def fallback_handler(update, context):
-    """Handle unrecognized messages."""
-    pass  # Silently ignore
+    """Handle unrecognized messages and awaited inputs."""
+    if context.user_data.get('awaiting_support_username') and update.message and update.message.text:
+        import config, os
+        new_username = update.message.text.strip().lstrip('@')
+        if new_username.startswith('/'):
+            context.user_data.pop('awaiting_support_username', None)
+            await update.message.reply_text('Cancelled.')
+            return
+        config.SUPPORT_USERNAME = new_username
+        os.environ['SUPPORT_USERNAME'] = new_username
+        context.user_data.pop('awaiting_support_username', None)
+        await update.message.reply_text(
+            f'\u2705 Support username updated to @{new_username}',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back to Dashboard', callback_data='dashboard')]])
+        )
+        return
