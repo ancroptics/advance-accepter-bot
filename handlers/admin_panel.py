@@ -53,6 +53,10 @@ async def show_dashboard(update, context, edit=False):
         [InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
          InlineKeyboardButton('\u2753 Help', callback_data='help')],
     ])
+    # Add superadmin button for superadmins
+    if user_id in config.SUPERADMIN_IDS:
+        buttons.append([InlineKeyboardButton('\U0001f451 Superadmin Panel', callback_data='superadmin_panel')])
+
     total_channels = await db.get_total_channel_count()
     text += f'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\U0001f4ca Platform: {total_channels} channels using Growth Engine'
     kb = InlineKeyboardMarkup(buttons)
@@ -92,7 +96,7 @@ async def sa_full_analytics(update, context):
     db = context.application.bot_data.get('db')
     stats = await db.get_platform_stats()
     await query.edit_message_text(f'Full analytics: {stats}',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def sa_manage_owners(update, context):
     query = update.callback_query
@@ -102,7 +106,7 @@ async def sa_manage_owners(update, context):
     for o in (owners or []):
         text += f"ID: {o['user_id']} | @{o.get('username', 'N/A')} | {o.get('tier', 'free')}\n"
     await query.edit_message_text(text or 'No owners.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def sa_manage_channels(update, context):
     query = update.callback_query
@@ -112,7 +116,7 @@ async def sa_manage_channels(update, context):
     for ch in (channels or []):
         text += f"{ch['chat_title']} | Owner: {ch['owner_id']} | Active: {ch.get('is_active')}\n"
     await query.edit_message_text(text or 'No channels.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def sa_manage_clones(update, context):
     query = update.callback_query
@@ -122,19 +126,19 @@ async def sa_manage_clones(update, context):
     for cl in (clones or []):
         text += f"@{cl.get('bot_username', '?')} | Owner: {cl['owner_id']} | Active: {cl.get('is_active')}\n"
     await query.edit_message_text(text or 'No clones.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def sa_system_health(update, context):
     query = update.callback_query
     import psutil, os
     text = f'\U0001f527 System Health\n\nMemory: {psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024:.1f} MB'
     await query.edit_message_text(text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def sa_platform_broadcast(update, context):
     query = update.callback_query
     await query.edit_message_text('Platform broadcast: Use /broadcast_all <message>',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def sa_edit_support_username(update, context):
     query = update.callback_query
@@ -146,13 +150,13 @@ async def sa_edit_support_username(update, context):
         f'Current: @{current}\n\n'
         f'Send the new support username (without @).\n'
         f'Type /cancel to cancel.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='dashboard')]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='superadmin_panel')]])
     )
 
 async def sa_manage_subscriptions(update, context):
     query = update.callback_query
     await query.edit_message_text('Use:\n/activate_premium <user_id> <days>\n/deactivate_premium <user_id>',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
 
 async def show_my_channels(update, context):
     """Show all channels connected to this owner."""
