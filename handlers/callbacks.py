@@ -98,12 +98,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('analytics:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
-            stats = await db.get_channel_analytics(chat_id)
             text = (f'\U0001f4ca ANALYTICS: {channel["chat_title"]}\n\n'
-                    f'Total Requests: {stats.get("total_requests", 0)}\n'
-                    f'Approved: {stats.get("approved", 0)}\n'
-                    f'Pending: {stats.get("pending", 0)}\n'
-                    f'Declined: {stats.get("declined", 0)}\n'
+                    f'Total Requests: {channel.get("total_requests_received", 0)}\n'
+                    f'Approved: {channel.get("total_approved", 0)}\n'
+                    f'Pending: {channel.get("pending_requests", 0)}\n'
+                    f'Declined: {channel.get("total_declined", 0)}\n'
                     f'Today: {stats.get("today", 0)}\n'
                     f'This Week: {stats.get("this_week", 0)}\n')
             await query.edit_message_text(text,
