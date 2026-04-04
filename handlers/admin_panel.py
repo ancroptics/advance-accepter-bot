@@ -72,7 +72,7 @@ async def superadmin_handler(update, context):
     text = ('\U0001f451 SUPERADMIN PANEL\n\n'
             f'\U0001f465 Channel Owners: {stats.get("total_owners", 0)}\n'
             f'\U0001f4e2 Total Channels: {stats.get("total_channels", 0)}\n'
-            f'\U0001f9ec Active Clones: {stats.get("total_clones", 0)}\n'
+            f'\U0001f9ec Active Clones: {stats.get("active_clones", 0)}\n'
             f'\U0001f464 End Users: {stats.get("total_users", 0)}\n'
             f'\U0001f48e Premium: {stats.get("premium_owners", 0)}\n')
     buttons = [
