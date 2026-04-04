@@ -40,9 +40,11 @@ async def show_channel_settings(update, context, chat_id, edit=False):
     )
 
     cid = chat_id
+    auto_approve_text = ('\u274c Disable' if channel.get('auto_approve') else '\u2705 Enable') + ' Auto-Approve'
+    welcome_dm_text = ('\u274c' if channel.get('welcome_dm_enabled') else '\u2705') + ' Toggle Welcome DM'
     buttons = [
         # Join requests
-        [InlineKeyboardButton(f"{'\u274c Disable' if channel.get('auto_approve') else '\u2705 Enable'} Auto-Approve", callback_data=f'toggle_auto_approve:{cid}')],
+        [InlineKeyboardButton(auto_approve_text, callback_data=f'toggle_auto_approve:{cid}')],
         [
             InlineKeyboardButton('\U0001f552 Instant', callback_data=f'approve_mode:{cid}:instant'),
             InlineKeyboardButton('\U0001f4a7 Drip', callback_data=f'approve_mode:{cid}:drip'),
@@ -53,11 +55,11 @@ async def show_channel_settings(update, context, chat_id, edit=False):
         [InlineKeyboardButton('\U0001f4ac Edit Welcome Message', callback_data=f'edit_welcome:{cid}')],
         [InlineKeyboardButton('\U0001f30e Multi-Language Messages', callback_data=f'language_setup:{cid}')],
         [InlineKeyboardButton('\U0001f441 Preview Welcome DM', callback_data=f'preview_welcome:{cid}')],
-        [InlineKeyboardButton(f"{'\u274c' if channel.get('welcome_dm_enabled') else '\u2705'} Toggle Welcome DM", callback_data=f'toggle_welcome_dm:{cid}')],
+        [InlineKeyboardButton(welcome_dm_text, callback_data=f'toggle_welcome_dm:{cid}')],
         # Growth tools
         [InlineKeyboardButton('\U0001f512 Force Subscribe Setup', callback_data=f'force_sub_setup:{cid}')],
         [InlineKeyboardButton('\U0001f504 Cross-Promotion', callback_data=f'cross_promo_setup:{cid}')],
-        [InlineKeyboardButton(f"\U0001f3f7\ufe0f Watermark: {watermark}", callback_data=f'toggle_watermark:{cid}')],
+        [InlineKeyboardButton(f'\U0001f3f7\ufe0f Watermark: {watermark}', callback_data=f'toggle_watermark:{cid}')],
         # Analytics
         [InlineKeyboardButton('\U0001f4ca Channel Analytics', callback_data=f'analytics:{cid}')],
         [InlineKeyboardButton('\U0001f4e4 Export Data (CSV)', callback_data=f'export_csv:{cid}')],

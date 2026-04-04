@@ -23,8 +23,9 @@ async def show_force_sub_menu(update, context, chat_id):
     else:
         text += 'None configured\n'
     text += f'\nTimeout: {timeout} hours\n(Auto-approve after timeout even if not joined)'
+    toggle_text = '\U0001f534 Disable' if enabled else '\U0001f7e2 Enable'
     buttons = [
-        [InlineKeyboardButton(f"{'\U0001f534 Disable' if enabled else '\U0001f7e2 Enable'}", callback_data=f'toggle_force_sub:{chat_id}')],
+        [InlineKeyboardButton(toggle_text, callback_data=f'toggle_force_sub:{chat_id}')],
         [InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
