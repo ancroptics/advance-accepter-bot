@@ -1,9 +1,17 @@
 import logging
 import asyncio
+import ssl
 import asyncpg
 import config
 
 logger = logging.getLogger(__name__)
+
+
+def _get_ssl_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 class DatabasePool:
@@ -13,14 +21,16 @@ class DatabasePool:
 
     @classmethod
     async def create(cls, dsn):
-        """Factory method to create and connect a pool."""
         instance = cls()
+        # Strip sslmode param from DSN (asyncpg uses ssl= kwarg instead)
+        clean_dsn = dsn.split('?')[0] if '?' in dsn else dsn
         instance.pool = await asyncpg.create_pool(
-            dsn=dsn,
+            dsn=clean_dsn,
             min_size=2,
             max_size=10,
             command_timeout=60,
             statement_cache_size=0,
+            ssl=_get_ssl_context(),
         )
         logger.info('Database pool created')
         return instance
@@ -31,12 +41,14 @@ class DatabasePool:
         self._connecting = True
         try:
             dsn = config.DATABASE_URL
+            clean_dsn = dsn.split('?')[0] if '?' in dsn else dsn
             self.pool = await asyncpg.create_pool(
-                dsn=dsn,
+                dsn=clean_dsn,
                 min_size=2,
                 max_size=10,
                 command_timeout=60,
                 statement_cache_size=0,
+                ssl=_get_ssl_context(),
             )
             logger.info('Database pool created')
         except Exception as e:
