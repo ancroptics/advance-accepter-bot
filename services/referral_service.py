@@ -1,17 +1,18 @@
 import logging
-from database.models import get_referral_stats, create_referral, process_referral_reward
 
 logger = logging.getLogger(__name__)
 
 
-async def generate_referral_link(db, user_id, channel_id):
-    ref = await create_referral(db, user_id, channel_id)
-    return f"https://t.me/{{bot_username}}?start=ref_{ref['code']}"
+async def generate_referral_link(db, user_id, bot_username):
+    """Generate a referral link for a user."""
+    return f"https://t.me/{bot_username}?start=ref_{user_id}"
 
 
-async def handle_referral(db, referrer_id, referred_id, channel_id):
+async def handle_referral(db, referrer_id, referred_id):
+    """Process a referral - award coins to referrer."""
     try:
-        await process_referral_reward(db, referrer_id, referred_id, channel_id)
+        await db.set_referrer(referred_id, referrer_id)
+        await db.award_referral_coins(referrer_id, 10)
         return True
     except Exception as e:
         logger.error(f'Referral error: {e}')
@@ -19,9 +20,10 @@ async def handle_referral(db, referrer_id, referred_id, channel_id):
 
 
 async def get_referral_report(db, user_id):
-    stats = await get_referral_stats(db, user_id)
-    if not stats:
-        return '📊 No referrals yet.'
-    total = stats.get('total', 0)
-    successful = stats.get('successful', 0)
-    return f"📊 *Referral Stats*\n\n👥 Total Referrals: {total}\n✅ Successful: {successful}"
+    """Get referral stats for a user."""
+    user = await db.get_end_user(user_id)
+    if not user:
+        return '\U0001f4ca No referrals yet.'
+    count = user.get('referral_count', 0) if user else 0
+    coins = user.get('coins', 0) if user else 0
+    return f"\U0001f4ca *Referral Stats*\n\n\U0001f465 Total Referrals: {count}\n\U0001f4b0 Coins Earned: {coins}"
