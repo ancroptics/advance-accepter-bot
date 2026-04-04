@@ -22,8 +22,8 @@ async def show_clone_menu(update, context):
             status = '\U0001f7e2 Active' if clone['is_active'] else '\U0001f534 Inactive'
             text += (f"\U0001f916 @{clone['bot_username'] or 'Unknown'}\n"
                      f"   Status: {status}\n"
-                     f"   Channels: {clone['total_channels']}\n"
-                     f"   Users: {clone['total_users']}\n\n")
+                     f"   Errors: {clone.get('error_count', 0)}\n"
+                     f"   Created: {str(clone.get('created_at', ''))[:10]}\n\n")
         buttons = []
         for clone in clones:
             cid = clone['clone_id']
