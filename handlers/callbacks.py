@@ -45,7 +45,7 @@ async def show_force_sub_settings(query, db, chat_id):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
-async def show_channel_settings(query, db, chat_id, user_id):
+async def show_channel_settings(query, db, chat_id, user_id, context=None):
     """Show detailed settings for a specific channel."""
     channel = await db.get_channel(chat_id)
     if not channel or channel.get('owner_id') != user_id:
@@ -60,8 +60,11 @@ async def show_channel_settings(query, db, chat_id, user_id):
     # Get live pending count from Telegram API
     pending_db = 0
     try:
-        chat_info = await context.bot.get_chat(chat_id)
-        pending_db = getattr(chat_info, 'pending_join_request_count', 0) or 0
+        if context:
+            chat_info = await context.bot.get_chat(chat_id)
+            pending_db = getattr(chat_info, 'pending_join_request_count', 0) or 0
+        else:
+            pending_db = await db.get_pending_count(chat_id)
     except Exception:
         pending_db = await db.get_pending_count(chat_id)
     pending = pending_db if pending_db is not None else channel.get('pending_requests', 0)
@@ -207,6 +210,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
                 [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
                 [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
+                [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
                 [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')],
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -222,7 +226,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('channel:') or data.startswith('manage_channel:'):
             chat_id = int(data.split(':')[1])
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('back_channels'):
             await show_my_channels(query, db, user_id)
@@ -233,40 +237,51 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mode = parts[2]
             await db.update_channel_setting(chat_id, 'approve_mode', mode)
             await query.answer(f'Mode set to {mode}', show_alert=True)
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('toggle_welcome_dm:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
             current = channel.get('welcome_dm_enabled', True)
             await db.update_channel_setting(chat_id, 'welcome_dm_enabled', not current)
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('toggle_auto_approve:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
             current = channel.get('auto_approve', True)
             await db.update_channel_setting(chat_id, 'auto_approve', not current)
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('toggle_force_sub:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
             current = channel.get('force_subscribe_enabled', False)
             await db.update_channel_setting(chat_id, 'force_subscribe_enabled', not current)
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('edit_welcome:'):
             chat_id = int(data.split(':')[1])
             context.user_data['editing_welcome_for'] = chat_id
+            channel = await db.get_channel(chat_id)
+            current_msg = channel.get('welcome_message', 'Welcome to {channel_name}! \U0001f389') if channel else 'Not set'
             await query.edit_message_text(
+                '\U0001f4dd EDIT WELCOME MESSAGE\n\n'
+                '\u2501\u2501\u2501 Current Message \u2501\u2501\u2501\n\n'
+                f'{current_msg}\n\n'
+                '\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n'
                 'Send me the new welcome message.\n\n'
                 'Available variables:\n'
                 '{first_name} - User first name\n'
                 '{last_name} - User last name\n'
                 '{username} - Username\n'
                 '{user_id} - User ID\n'
-                '{channel_name} - Channel name\n\n'
+                '{channel_name} - Channel name\n'
+                '{channel_username} - Channel @username\n'
+                '{member_count} - Member count\n'
+                '{coins} - User coins\n'
+                '{referral_link} - Referral link\n'
+                '{date} - Current date\n\n'
                 'Send /cancel to cancel.',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton('Cancel', callback_data=f'channel:{chat_id}')]
@@ -346,7 +361,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rate = int(parts[2])
             await db.update_channel_setting(chat_id, 'drip_rate', rate)
             await query.answer(f'Drip rate set to {rate}/batch', show_alert=True)
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('set_drip_interval:'):
             parts = data.split(':')
@@ -354,7 +369,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             interval = int(parts[2])
             await db.update_channel_setting(chat_id, 'drip_interval', interval)
             await query.answer(f'Drip interval set to {interval}s', show_alert=True)
-            await show_channel_settings(query, db, chat_id, user_id)
+            await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('my_clones'):
             await show_my_clones(query, db, user_id)
@@ -407,6 +422,65 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers.admin_panel import sa_manage_subscriptions
             await sa_manage_subscriptions(update, context)
 
+        elif data.startswith('sa_activate_user:'):
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            target_id = int(data.split(':')[1])
+            target_owner = await db.get_owner(target_id)
+            target_name = target_owner.get('first_name', 'Unknown') if target_owner else 'Unknown'
+            current_tier = target_owner.get('tier', 'free') if target_owner else 'free'
+            buttons = [
+                [InlineKeyboardButton('\U0001f48e Premium (30d)', callback_data=f'sa_set_tier:{target_id}:premium:30'),
+                 InlineKeyboardButton('\U0001f48e Premium (90d)', callback_data=f'sa_set_tier:{target_id}:premium:90')],
+                [InlineKeyboardButton('\U0001f4bc Business (30d)', callback_data=f'sa_set_tier:{target_id}:business:30'),
+                 InlineKeyboardButton('\U0001f4bc Business (90d)', callback_data=f'sa_set_tier:{target_id}:business:90')],
+                [InlineKeyboardButton('\U0001f4bc Business (365d)', callback_data=f'sa_set_tier:{target_id}:business:365')],
+            ]
+            if current_tier != 'free':
+                buttons.append([InlineKeyboardButton('\u274c Deactivate Premium', callback_data=f'sa_deactivate:{target_id}')])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='sa_manage_subs')])
+            await query.edit_message_text(
+                f'\U0001f48e Manage Premium for:\n\n'
+                f'\U0001f464 {target_name} (ID: {target_id})\n'
+                f'Current Plan: {current_tier.upper()}\n\n'
+                f'Select a plan to activate:',
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+
+        elif data.startswith('sa_set_tier:'):
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            parts = data.split(':')
+            target_id = int(parts[1])
+            tier = parts[2]
+            days = int(parts[3])
+            await db.activate_premium(target_id, tier, days)
+            await query.answer(f'Activated {tier} for {days} days!', show_alert=True)
+            # Notify the user
+            try:
+                await context.bot.send_message(target_id, f'\U0001f389 Your plan has been upgraded to {tier.upper()} for {days} days!')
+            except Exception:
+                pass
+            # Go back to manage subs
+            from handlers.admin_panel import sa_manage_subscriptions
+            await sa_manage_subscriptions(update, context)
+
+        elif data.startswith('sa_deactivate:'):
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            target_id = int(data.split(':')[1])
+            await db.deactivate_premium(target_id)
+            await query.answer('Premium deactivated!', show_alert=True)
+            try:
+                await context.bot.send_message(target_id, '\u26a0\ufe0f Your premium plan has been deactivated. You are now on the FREE plan.')
+            except Exception:
+                pass
+            from handlers.admin_panel import sa_manage_subscriptions
+            await sa_manage_subscriptions(update, context)
+
         elif data == 'sa_system_health':
             from handlers.admin_panel import sa_system_health
             await sa_system_health(update, context)
@@ -414,6 +488,70 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'edit_support_username':
             from handlers.admin_panel import sa_edit_support_username
             await sa_edit_support_username(update, context)
+
+        elif data == 'sa_feature_toggles':
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            import config as _cfg
+            clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
+            promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
+            await query.edit_message_text(
+                '\u2699\ufe0f FEATURE TOGGLES\n\n'
+                f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
+                f'\U0001f504 Cross Promotion: {promo_status}\n\n'
+                'Toggle features on/off for the entire platform:',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
+                    [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
+                    [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
+                ])
+            )
+
+        elif data == 'sa_toggle_cloning':
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            import config as _cfg
+            _cfg.ENABLE_CLONING = not _cfg.ENABLE_CLONING
+            status = 'ENABLED' if _cfg.ENABLE_CLONING else 'DISABLED'
+            await query.answer(f'Clone Bot feature {status}!', show_alert=True)
+            # Re-show toggles
+            clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
+            promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
+            await query.edit_message_text(
+                '\u2699\ufe0f FEATURE TOGGLES\n\n'
+                f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
+                f'\U0001f504 Cross Promotion: {promo_status}\n\n'
+                'Toggle features on/off for the entire platform:',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
+                    [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
+                    [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
+                ])
+            )
+
+        elif data == 'sa_toggle_cross_promo':
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            import config as _cfg
+            _cfg.ENABLE_CROSS_PROMO = not _cfg.ENABLE_CROSS_PROMO
+            status = 'ENABLED' if _cfg.ENABLE_CROSS_PROMO else 'DISABLED'
+            await query.answer(f'Cross Promotion {status}!', show_alert=True)
+            clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
+            promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
+            await query.edit_message_text(
+                '\u2699\ufe0f FEATURE TOGGLES\n\n'
+                f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
+                f'\U0001f504 Cross Promotion: {promo_status}\n\n'
+                'Toggle features on/off for the entire platform:',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
+                    [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
+                    [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
+                ])
+            )
 
         elif data == 'sa_edit_upi':
             context.user_data['awaiting_upi_input'] = True
@@ -798,7 +936,7 @@ async def handle_batch_approve(query, context, db, chat_id):
 
     await query.answer(f'Approved: {approved}, Failed: {failed}', show_alert=True)
     try:
-        await show_channel_settings(query, db, chat_id, query.from_user.id)
+        await show_channel_settings(query, db, chat_id, query.from_user.id, context)
     except Exception:
         pass  # Message not modified is OK after batch operations
 
@@ -828,7 +966,7 @@ async def handle_start_drip(query, context, db, chat_id):
     remaining = await db.get_pending_count(chat_id)
     await query.answer(f'Drip: approved {approved}, {remaining} remaining', show_alert=True)
     try:
-        await show_channel_settings(query, db, chat_id, query.from_user.id)
+        await show_channel_settings(query, db, chat_id, query.from_user.id, context)
     except Exception:
         pass
 
@@ -851,7 +989,7 @@ async def handle_decline_all(query, context, db, chat_id):
 
     await query.answer(f'Declined: {declined}', show_alert=True)
     try:
-        await show_channel_settings(query, db, chat_id, query.from_user.id)
+        await show_channel_settings(query, db, chat_id, query.from_user.id, context)
     except Exception:
         pass
 
