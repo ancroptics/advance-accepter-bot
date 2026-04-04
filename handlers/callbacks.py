@@ -1,5 +1,6 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
+from telegram.error import BadRequest, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database.models import DatabaseModels
 import config
@@ -248,6 +249,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text('Unknown action.',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
 
+        except BadRequest as e:
+            if 'Message is not modified' not in str(e):
+                raise
     except Exception as e:
         logger.exception(f'Error in callback_router: {e}')
         try:
