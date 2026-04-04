@@ -46,10 +46,19 @@ async def show_dashboard(update, context, edit=False):
          InlineKeyboardButton('\U0001f4ca Analytics', callback_data='analytics_overview')],
         [InlineKeyboardButton('\U0001f4dd Templates', callback_data='templates_menu'),
          InlineKeyboardButton('\U0001f916 Auto Poster', callback_data='auto_poster_menu')],
-        [InlineKeyboardButton('\U0001f517 Referral', callback_data='referral_info'),
-         InlineKeyboardButton('\U0001f504 Cross-Promo', callback_data='cross_promo_setup:0')],
-        [InlineKeyboardButton('\U0001f9ec Clone Bot', callback_data='clone_bot_menu'),
-         InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info')],
+    ])
+    # Conditionally show Cross-Promo and Clone Bot based on feature flags
+    row4 = []
+    row4.append(InlineKeyboardButton('\U0001f517 Referral', callback_data='referral_info'))
+    if config.ENABLE_CROSS_PROMO:
+        row4.append(InlineKeyboardButton('\U0001f504 Cross-Promo', callback_data='cross_promo_setup:0'))
+    buttons.append(row4)
+    row5 = []
+    if config.ENABLE_CLONING:
+        row5.append(InlineKeyboardButton('\U0001f9ec Clone Bot', callback_data='clone_bot_menu'))
+    row5.append(InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info'))
+    buttons.append(row5)
+    buttons.extend([
         [InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
          InlineKeyboardButton('\u2753 Help', callback_data='help')],
     ])
