@@ -104,8 +104,9 @@ class SchedulerService:
             logger.error(f'Error in _auto_approve_expired_force_sub: {e}')
 
     async def _sync_pending_from_telegram(self):
-        """Sync pending join requests from Telegram API into our database.
-        This catches requests made before the bot became admin."""
+        """Sync pending join request COUNTS from Telegram API.
+        Note: Telegram Bot API cannot list individual pending requests.
+        We can only get the count via getChat and sync it."""
         try:
             db = self.application.bot_data.get('db')
             if not db:
@@ -116,39 +117,19 @@ class SchedulerService:
             if not channels:
                 return
 
-            total_synced = 0
             for channel in channels:
                 chat_id = channel['chat_id']
                 try:
-                    # Use raw API call to get pending join requests
-                    # python-telegram-bot doesn't have a built-in method for this
-                    import aiohttp
-                    url = f'https://api.telegram.org/bot{bot.token}/getChatJoinRequests'
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                            data = await response.json()
+                    chat_info = await bot.get_chat(chat_id)
+                    telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
+                    await db.update_channel_setting(chat_id, 'pending_requests', telegram_pending)
+                    await asyncio.sleep(1)  # Rate limit between channels
+                except Exception as e:
+                    if 'chat_admin_required' not in str(e).lower():
+                        logger.warning(f'Error syncing pending count for {chat_id}: {e}')
 
-                    if not data.get('ok') or not data.get('result'):
-                        continue
-
-                    for req in data['result']:
-                        user = req.get('user', {})
-                        user_id = user.get('id')
-                        if not user_id:
-                            continue
-
-                        # Try to save - will update if exists (UPSERT)
-                        try:
-                            await db.save_join_request(
-                                user_id=user_id,
-                                chat_id=chat_id,
-                                username=user.get('username'),
-                                first_name=user.get('first_name'),
-                                user_language=user.get('language_code'),
-                            )
-                            total_synced += 1
-                        except Exception as e:
-                            logger.debug(f'Error syncing request {user_id} for {chat_id}: {e}')
+        except Exception as e:
+            logger.error(f'Error in _sync_pending_from_telegram: {e}')
 
                     # Update pending count
                     pending_count = await db.get_pending_count(chat_id)
