@@ -128,3 +128,7 @@ async def handle_text_input(update, context):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
         )
         return
+
+
+# Alias for bot.py import
+register_all_handlers = register_handlers
