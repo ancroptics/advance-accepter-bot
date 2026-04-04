@@ -10,7 +10,6 @@ from services.language_service import get_welcome_for_language
 
 logger = logging.getLogger(__name__)
 
-
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """THE CORE HANDLER - must never crash"""
     try:
@@ -57,6 +56,13 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # Step 3: Check approval mode
         channel = await db.get_channel(chat_id)
+        # Increment pending counter
+        if channel:
+            try:
+                pending_count = await db.get_pending_count(chat_id)
+                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
+            except Exception as e:
+                logger.error(f'Error updating pending count: {e}')
         if not channel:
             # Channel not registered - auto approve
             try:
@@ -143,7 +149,6 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.chat_join_request.approve()
         except Exception:
             pass
-
 
 async def _approve_and_dm(join_request, user, chat, channel, db, context):
     """Send welcome DM first, then approve the request"""
