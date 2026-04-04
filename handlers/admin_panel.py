@@ -37,10 +37,11 @@ async def show_dashboard(update, context, edit=False):
             auto = '\u2705 Auto: ON' if ch.get('auto_approve') else '\u23f8\ufe0f Auto: OFF'
             text += (f"\U0001f4e2 {ch['chat_title']}\n"
                      f"   \U0001f465 {ch.get('member_count', 0)} | \U0001f4cb {ch.get('pending_requests', 0)} pending\n"
-                     f"   {auto}\n\n")
+                     f"   {auto}\n\n")        
     else:
         text += 'No channels yet. Add the bot as admin to a channel!\n\n'
     buttons.extend([
+        [InlineKeyboardButton('\U0001f4e2 My Channels', callback_data='my_channels')],
         [InlineKeyboardButton('\U0001f4e2 Broadcast', callback_data='broadcast'),
          InlineKeyboardButton('\U0001f4ca Analytics', callback_data='analytics_overview')],
         [InlineKeyboardButton('\U0001f4dd Templates', callback_data='templates_menu'),
@@ -51,7 +52,6 @@ async def show_dashboard(update, context, edit=False):
          InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info')],
         [InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
          InlineKeyboardButton('\u2753 Help', callback_data='help')],
-        [InlineKeyboardButton('\U0001f4e2 My Channels', callback_data='my_channels')],
     ])
     total_channels = await db.get_total_channel_count()
     text += f'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\U0001f4ca Platform: {total_channels} channels using Growth Engine'
@@ -177,6 +177,6 @@ async def show_my_channels(update, context):
         text += f"   ID: {ch['chat_id']}\n"
         text += f"   Members: {ch.get('member_count', 0)} | Pending: {ch.get('pending_requests', 0)}\n"
         text += f"   Mode: {auto}\n\n"
-        buttons.append([InlineKeyboardButton(f"\u2699\ufe0f {ch['chat_title'][:25]}", callback_data=f"manage_channel:{ch['chat_id']}")])    
+        buttons.append([InlineKeyboardButton(f"\u2699\ufe0f {ch['chat_title'][:25]}", callback_data=f"manage_channel:{ch['chat_id']}")])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
