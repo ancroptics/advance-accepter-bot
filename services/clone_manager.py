@@ -1,8 +1,8 @@
 import logging
 import asyncio
 import json
-from telegram import Bot, Update
-from telegram.ext import Application, ChatJoinRequestHandler, ChatMemberHandler
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, ChatJoinRequestHandler, ChatMemberHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 import config
 
 logger = logging.getLogger(__name__)
@@ -55,13 +55,16 @@ class CloneManager:
             clone_app.bot_data['clone_id'] = clone_id
             clone_app.bot_data['parent_app'] = self.application
 
-            # Register join request handler for the clone
+            # Register handlers for the clone
+            clone_app.add_handler(CommandHandler('start', clone_start_handler))
             clone_app.add_handler(ChatJoinRequestHandler(clone_join_request_handler))
+            clone_app.add_handler(CallbackQueryHandler(clone_callback_handler))
+            clone_app.add_handler(MessageHandler(filters.ALL, clone_fallback_handler))
 
             await clone_app.initialize()
             await clone_app.start()
             await clone_app.updater.start_polling(
-                allowed_updates=['chat_join_request', 'my_chat_member'],
+                allowed_updates=['message', 'callback_query', 'chat_join_request', 'my_chat_member'],
                 drop_pending_updates=True,
             )
 
@@ -93,6 +96,119 @@ class CloneManager:
     async def shutdown_all_clones(self):
         for clone_id in list(self.active_clones.keys()):
             await self.stop_clone(clone_id)
+
+
+async def clone_start_handler(update: Update, context):
+    """Handle /start for clone bots."""
+    try:
+        bot_info = await context.bot.get_me()
+        db = context.application.bot_data.get('db')
+        owner_id = context.application.bot_data.get('owner_id')
+        clone_id = context.application.bot_data.get('clone_id')
+
+        # Check for force sub verification deep link: /start verify_CHATID
+        if context.args and context.args[0].startswith('verify_'):
+            try:
+                chat_id = int(context.args[0][7:])
+                await _handle_clone_force_sub_verify(update, context, chat_id)
+                return
+            except (ValueError, IndexError):
+                pass
+
+        text = (
+            f'\U0001f916 Hi! I\'m @{bot_info.username}\n\n'
+            f'I\'m a clone bot for Growth Engine.\n'
+            f'I automatically handle join requests for channels I manage.\n\n'
+            f'\u2705 Bot is active and running!'
+        )
+        await update.message.reply_text(text)
+    except Exception as e:
+        logger.error(f'Error in clone start handler: {e}')
+
+
+async def _handle_clone_force_sub_verify(update, context, chat_id):
+    """Verify force subscribe for clone bot via deep link."""
+    user_id = update.effective_user.id
+    db = context.application.bot_data.get('db')
+    if not db:
+        await update.message.reply_text('Bot is initializing, try again.')
+        return
+
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await update.message.reply_text('Channel not found.')
+        return
+
+    required_channels_raw = channel.get('force_subscribe_channels') or []
+    if isinstance(required_channels_raw, str):
+        try:
+            required_channels = json.loads(required_channels_raw)
+        except (ValueError, TypeError):
+            required_channels = []
+    else:
+        required_channels = required_channels_raw if isinstance(required_channels_raw, list) else []
+
+    all_joined = True
+    not_joined = []
+    for req_ch in required_channels:
+        try:
+            member = await context.bot.get_chat_member(req_ch['chat_id'], user_id)
+            if member.status in ('left', 'kicked'):
+                all_joined = False
+                not_joined.append(req_ch)
+        except Exception:
+            all_joined = False
+            not_joined.append(req_ch)
+
+    if all_joined:
+        try:
+            await context.bot.approve_chat_join_request(chat_id, user_id)
+            await db.update_join_request_status(user_id, chat_id, 'approved', 'force_sub_clone')
+            await update.message.reply_text(
+                f'\u2705 Verified! You\'ve been approved to join {channel.get("chat_title", "the channel")}!'
+            )
+        except Exception as e:
+            logger.error(f'Error approving after clone force sub verify: {e}')
+            await update.message.reply_text('\u2705 Verified! You should now have access.')
+    else:
+        text = '\u274c You haven\'t joined all required channels yet:\n\n'
+        buttons = []
+        for ch in not_joined:
+            text += f"\u2022 {ch.get('title', 'Channel')}\n"
+            if ch.get('url'):
+                buttons.append([InlineKeyboardButton(
+                    f"\U0001f4e2 Join {ch.get('title', '')}",
+                    url=ch['url']
+                )])
+        bot_info = await context.bot.get_me()
+        buttons.append([InlineKeyboardButton(
+            '\u2705 I\'ve Joined \u2014 Verify',
+            url=f'https://t.me/{bot_info.username}?start=verify_{chat_id}'
+        )])
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def clone_callback_handler(update: Update, context):
+    """Handle callback queries for clone bots."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith('verify_force_sub:'):
+        chat_id = int(data.split(':')[1])
+        # For clone bots, redirect to deep link since clone handles its own callbacks
+        bot_info = await context.bot.get_me()
+        await query.edit_message_text(
+            'Please click the button below to verify:',
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton('\u2705 Verify', url=f'https://t.me/{bot_info.username}?start=verify_{chat_id}')
+            ]])
+        )
+
+
+async def clone_fallback_handler(update: Update, context):
+    """Handle any other messages for clone bots."""
+    pass  # Silently ignore
 
 
 async def clone_join_request_handler(update: Update, context):
@@ -236,9 +352,10 @@ async def clone_join_request_handler(update: Update, context):
                                 f"\U0001f4e2 Join {ch.get('title', '')}",
                                 url=ch['url']
                             )])
+                    bot_info = await context.bot.get_me()
                     buttons.append([InlineKeyboardButton(
                         "\u2705 I've Joined \u2014 Verify Me",
-                        callback_data=f'verify_force_sub:{chat_id}'
+                        url=f'https://t.me/{bot_info.username}?start=verify_{chat_id}'
                     )])
                     await context.bot.send_message(
                         user_id, fsub_text,
