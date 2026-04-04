@@ -6,10 +6,8 @@ from utils.decorators import superadmin_only
 
 logger = logging.getLogger(__name__)
 
-
 async def dashboard_handler(update, context):
     await show_dashboard(update, context, edit=False)
-
 
 async def show_dashboard(update, context, edit=False):
     user_id = update.effective_user.id
@@ -40,7 +38,7 @@ async def show_dashboard(update, context, edit=False):
             text += (f"\U0001f4e2 {ch['chat_title']}\n"
                      f"   \U0001f465 {ch.get('member_count', 0)} | \U0001f4cb {ch.get('pending_requests', 0)} pending\n"
                      f"   {auto}\n\n")
-            buttons.append([InlineKeyboardButton(f"\u2699\ufe0f Manage {ch['chat_title'][:20]}", callback_data=f"manage_channel:{ch['chat_id']}")])
+            buttons.append([InlineKeyboardButton(f"\u2699\ufe0f Manage {ch['chat_title'][:20]}", callback_data=f"manage_channel:{ch['chat_id']}")])        
     else:
         text += 'No channels yet. Add the bot as admin to a channel!\n\n'
     buttons.extend([
@@ -54,6 +52,7 @@ async def show_dashboard(update, context, edit=False):
          InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info')],
         [InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
          InlineKeyboardButton('\u2753 Help', callback_data='help')],
+        [InlineKeyboardButton('\U0001f4e2 My Channels', callback_data='my_channels')],
     ])
     total_channels = await db.get_total_channel_count()
     text += f'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\U0001f4ca Platform: {total_channels} channels using Growth Engine'
@@ -63,10 +62,8 @@ async def show_dashboard(update, context, edit=False):
     else:
         await update.effective_message.reply_text(text, reply_markup=kb)
 
-
 async def channels_handler(update, context):
     await show_dashboard(update, context, edit=False)
-
 
 @superadmin_only
 async def superadmin_handler(update, context):
@@ -87,9 +84,9 @@ async def superadmin_handler(update, context):
         [InlineKeyboardButton('\U0001f48e Manage Subs', callback_data='sa_manage_subs')],
         [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
         [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
+        [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
 
 async def sa_full_analytics(update, context):
     query = update.callback_query
@@ -157,3 +154,30 @@ async def sa_manage_subscriptions(update, context):
     query = update.callback_query
     await query.edit_message_text('Use:\n/activate_premium <user_id> <days>\n/deactivate_premium <user_id>',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
+async def show_my_channels(update, context):
+    """Show all channels connected to this owner."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    db = context.application.bot_data.get('db')
+    if not db:
+        await query.edit_message_text('Bot is still initializing...')
+        return
+    channels = await db.get_owner_channels(user_id)
+    if not channels:
+        text = '\U0001f4e2 MY CHANNELS\n\nNo channels connected yet!\n\nAdd this bot as admin to your channel and it will be detected automatically.'
+        buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+    text = '\U0001f4e2 MY CHANNELS\n\n'
+    buttons = []
+    for ch in channels:
+        status = '\u2705' if ch.get('is_active', True) else '\u274c'
+        auto = 'Auto-approve ON' if ch.get('auto_approve') else 'Manual'
+        text += f"{status} {ch['chat_title']}\n"
+        text += f"   ID: {ch['chat_id']}\n"
+        text += f"   Members: {ch.get('member_count', 0)} | Pending: {ch.get('pending_requests', 0)}\n"
+        text += f"   Mode: {auto}\n\n"
+        buttons.append([InlineKeyboardButton(f"\u2699\ufe0f {ch['chat_title'][:25]}", callback_data=f"manage_channel:{ch['chat_id']}")])    
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
