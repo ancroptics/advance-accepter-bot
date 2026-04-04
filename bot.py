@@ -23,10 +23,12 @@ logger = logging.getLogger(__name__)
 
 START_TIME = None
 BOT_STATUS = {'db': False, 'bot': False}
+# Will hold the telegram Application once it's ready
+APP_HOLDER = {'app': None}
 
 
 async def start_health_server(port):
-    """Start health server immediately so Render sees us as alive."""
+    """Start health+webhook server immediately so Render sees us as alive."""
     app = web.Application()
 
     async def health_handler(request):
@@ -39,8 +41,23 @@ async def start_health_server(port):
             'bot_running': BOT_STATUS['bot'],
         })
 
+    async def webhook_handler(request):
+        """Handle Telegram webhook updates. Returns 200 even if bot isn't ready yet."""
+        application = APP_HOLDER.get('app')
+        if not application or not BOT_STATUS['bot']:
+            # Bot not ready yet, acknowledge to Telegram so it doesn't retry too aggressively
+            return web.Response(status=200)
+        try:
+            data = await request.json()
+            update = Update.de_json(data, application.bot)
+            await application.update_queue.put(update)
+        except Exception as e:
+            logger.error(f'Error processing webhook update: {e}')
+        return web.Response(status=200)
+
     app.router.add_get('/', health_handler)
     app.router.add_get('/health', health_handler)
+    app.router.add_post('/webhook', webhook_handler)
     return app
 
 
@@ -78,7 +95,7 @@ async def main():
         return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
     socket.getaddrinfo = force_ipv4_getaddrinfo
 
-    # Start health server FIRST so Render sees us as alive
+    # Start health+webhook server FIRST so Render sees us as alive
     health_app = await start_health_server(config.PORT)
     runner = web.AppRunner(health_app)
     await runner.setup()
@@ -115,6 +132,9 @@ async def main():
         await application.start()
         BOT_STATUS['bot'] = True
 
+        # Store the application so the webhook handler can use it
+        APP_HOLDER['app'] = application
+
         if config.USE_WEBHOOK:
             webhook_url = f'{config.WEBHOOK_URL}/webhook'
             await application.bot.set_webhook(
@@ -123,18 +143,6 @@ async def main():
                 drop_pending_updates=True,
             )
             logger.info(f'Webhook set to {webhook_url}')
-
-            # Add webhook handler to existing health server
-            async def webhook_handler(request):
-                try:
-                    data = await request.json()
-                    update = Update.de_json(data, application.bot)
-                    await application.update_queue.put(update)
-                except Exception as e:
-                    logger.error(f'Error processing webhook update: {e}')
-                return web.Response(status=200)
-
-            health_app.router.add_post('/webhook', webhook_handler)
 
             # Notify superadmins
             db = application.bot_data['db']
