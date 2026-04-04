@@ -27,6 +27,16 @@ BOT_STATUS = {'db': False, 'bot': False}
 APP_HOLDER = {'app': None}
 
 
+async def error_handler(update, context):
+    """Global error handler to prevent 'No error handlers registered' warnings."""
+    logger.error(f'Exception while handling an update: {context.error}', exc_info=context.error)
+    if update and update.callback_query:
+        try:
+            await update.callback_query.answer('An error occurred. Please try again.', show_alert=True)
+        except Exception:
+            pass
+
+
 async def start_health_server(port):
     """Start health+webhook server immediately so Render sees us as alive."""
     app = web.Application()
@@ -107,6 +117,7 @@ async def main():
         # Build telegram application
         application = Application.builder().token(config.BOT_TOKEN).build()
         register_all_handlers(application)
+        application.add_error_handler(error_handler)
         await application.initialize()
 
         # Connect to database with retries
