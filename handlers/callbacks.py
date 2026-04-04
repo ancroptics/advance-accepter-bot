@@ -30,36 +30,69 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('manage_channel:'):
             chat_id = int(data.split(':')[1])
             context.user_data['active_channel_id'] = chat_id
-            channel = await db.get_channel(chat_id)
-            if not channel:
-                await query.edit_message_text('Channel not found.',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
-                return
-            auto = '\u2705 ON' if channel.get('auto_approve') else '\u274c OFF'
-            mode = channel.get('approve_mode', 'instant').title()
-            text = (f'\u2699\ufe0f MANAGE: {channel["chat_title"]}\n\n'
-                    f'Auto-Approve: {auto}\n'
-                    f'Mode: {mode}\n'
-                    f'Members: {channel.get("member_count", 0)}\n'
-                    f'Pending: {channel.get("pending_requests", 0)}\n')
-            buttons = [
-                [InlineKeyboardButton('\u2705 Toggle Auto-Approve', callback_data=f'toggle_auto:{chat_id}')],
-                [InlineKeyboardButton('\U0001f4dd Edit Welcome DM', callback_data=f'edit_welcome:{chat_id}')],
-                [InlineKeyboardButton('\U0001f512 Force Subscribe', callback_data=f'force_sub_menu:{chat_id}')],
-                [InlineKeyboardButton('\U0001f4ca Analytics', callback_data=f'analytics:{chat_id}')],
-                [InlineKeyboardButton('\U0001f4e2 Broadcast', callback_data=f'broadcast_to:{chat_id}')],
-                [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')],
-            ]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+            from handlers.channel_settings import show_channel_settings
+            await show_channel_settings(update, context, chat_id, edit=True)
 
-        elif data.startswith('toggle_auto:'):
+        elif data.startswith('toggle_auto_approve:') or data.startswith('toggle_auto:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
             new_val = not channel.get('auto_approve', True)
             await db.update_channel_setting(chat_id, 'auto_approve', new_val)
-            status = '\u2705 ON' if new_val else '\u274c OFF'
-            await query.edit_message_text(f'Auto-Approve is now {status}',
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
+            from handlers.channel_settings import show_channel_settings
+            await show_channel_settings(update, context, chat_id, edit=True)
+
+        elif data.startswith('approve_mode:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            mode = parts[2]
+            await db.update_channel_setting(chat_id, 'approve_mode', mode)
+            from handlers.channel_settings import show_channel_settings
+            await show_channel_settings(update, context, chat_id, edit=True)
+
+        elif data.startswith('pending_requests:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.batch_approve import show_pending_menu
+            await show_pending_menu(update, context, chat_id)
+
+        elif data.startswith('toggle_welcome_dm:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            new_val = not channel.get('welcome_dm_enabled', True)
+            await db.update_channel_setting(chat_id, 'welcome_dm_enabled', new_val)
+            from handlers.channel_settings import show_channel_settings
+            await show_channel_settings(update, context, chat_id, edit=True)
+
+        elif data.startswith('preview_welcome:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            welcome_msg = channel.get('welcome_message', 'Welcome {name}!')
+            preview = welcome_msg.replace('{name}', query.from_user.first_name).replace('{username}', f'@{query.from_user.username or "user"}').replace('{channel}', channel.get('chat_title', 'Channel')).replace('{date}', '2026-04-04')
+            await query.edit_message_text(
+                f'\U0001f441 WELCOME DM PREVIEW\n\n{preview}',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')]]))
+
+        elif data.startswith('language_setup:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.language_mgmt import show_language_menu
+            await show_language_menu(update, context, chat_id)
+
+        elif data.startswith('force_sub_setup:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.force_subscribe import show_force_sub_menu
+            await show_force_sub_menu(update, context, chat_id)
+
+        elif data.startswith('toggle_watermark:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            new_val = not channel.get('watermark_enabled', False)
+            await db.update_channel_setting(chat_id, 'watermark_enabled', new_val)
+            from handlers.channel_settings import show_channel_settings
+            await show_channel_settings(update, context, chat_id, edit=True)
+
+        elif data.startswith('export_csv:'):
+            chat_id = int(data.split(':')[1])
+            await query.edit_message_text('\U0001f4e4 Export feature coming soon!',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')]]))
 
         elif data.startswith('edit_welcome:'):
             chat_id = int(data.split(':')[1])
@@ -99,11 +132,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('analytics:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
+            stats = await db.get_channel_analytics(chat_id)
             text = (f'\U0001f4ca ANALYTICS: {channel["chat_title"]}\n\n'
-                    f'Total Requests: {channel.get("total_requests_received", 0)}\n'
-                    f'Approved: {channel.get("total_approved", 0)}\n'
-                    f'Pending: {channel.get("pending_requests", 0)}\n'
-                    f'Declined: {channel.get("total_declined", 0)}\n'
+                    f'Total Requests: {stats.get("total_requests", 0)}\n'
+                    f'Approved: {stats.get("approved", 0)}\n'
+                    f'Pending: {stats.get("pending", 0)}\n'
+                    f'Declined: {stats.get("declined", 0)}\n'
                     f'Today: {stats.get("today", 0)}\n'
                     f'This Week: {stats.get("this_week", 0)}\n')
             await query.edit_message_text(text,
