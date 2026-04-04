@@ -1,29 +1,25 @@
 import logging
-import config
 
 logger = logging.getLogger(__name__)
 
 
-async def get_watermark(db, chat_id, clone_id=None):
-    try:
-        channel = await db.get_channel(chat_id)
-        if not channel:
-            return ''
-        owner_id = channel.get('owner_id')
-        owner = await db.get_owner(owner_id)
-        if not owner:
-            return f'\n\n\u26a1 Powered by @{config.BOT_USERNAME} \u2014 Free channel growth tool'
+async def add_watermark(text, channel_name=None, owner_name=None):
+    if not text:
+        return text
+    watermark_parts = []
+    if channel_name:
+        watermark_parts.append(f'📢 {channel_name}')
+    if owner_name:
+        watermark_parts.append(f'by {owner_name}')
+    if not watermark_parts:
+        return text
+    watermark = ' | '.join(watermark_parts)
+    return f"{text}\n\n{'—' * 20}\n{watermark}"
 
-        tier = owner.get('tier', 'free')
-        watermark_enabled = channel.get('watermark_enabled', True)
 
-        if tier == 'free':
-            return f'\n\n\u26a1 Powered by @{config.BOT_USERNAME} \u2014 Free channel growth tool'
-        elif tier in ('premium', 'business'):
-            if watermark_enabled:
-                return f'\n\n\u26a1 Powered by @{config.BOT_USERNAME}'
-            return ''
-        return ''
-    except Exception as e:
-        logger.error(f'Watermark error: {e}')
-        return ''
+async def add_media_caption_watermark(caption, channel_name=None):
+    if not caption:
+        caption = ''
+    if channel_name:
+        return f"{caption}\n\n📢 {channel_name}"
+    return caption
