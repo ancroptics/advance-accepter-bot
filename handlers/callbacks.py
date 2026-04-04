@@ -1,6 +1,6 @@
 import logging
-from telegram import Update
-from telegram.error import BadRequest, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from database.models import DatabaseModels
 import config
