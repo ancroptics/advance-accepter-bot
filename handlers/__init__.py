@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 def register_handlers(application):
     """Register all bot handlers."""
     from handlers.admin_panel import dashboard_handler, channels_handler, superadmin_handler
-    from handlers.user_commands import start_handler, help_handler
+    from handlers.start import start_handler
+    from handlers.user_commands import help_handler
     from handlers.premium import activate_premium_handler, deactivate_premium_handler
 
     # 1. Command handlers
