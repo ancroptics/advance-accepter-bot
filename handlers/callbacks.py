@@ -90,6 +90,9 @@ async def show_channel_settings(query, db, chat_id, user_id):
     ])
     if force_sub:
         buttons.append([InlineKeyboardButton('\u2699\ufe0f Force Sub Settings', callback_data=f'force_sub_settings:{chat_id}')])
+    buttons.append([
+        InlineKeyboardButton(f'\U0001f4cb Pending Requests ({pending})', callback_data=f'pending_requests:{chat_id}'),
+    ])
     if pending > 0:
         buttons.append([
             InlineKeyboardButton(f'\u2705 Approve All ({pending})', callback_data=f'batch_approve:{chat_id}'),
@@ -102,6 +105,48 @@ async def show_channel_settings(query, db, chat_id, user_id):
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
     ])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='my_channels')])
+
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def show_pending_requests(query, context, db, chat_id, user_id):
+    """Show list of pending join requests for a channel."""
+    channel = await db.get_channel(chat_id)
+    if not channel or channel.get('owner_id') != user_id:
+        await query.edit_message_text('Channel not found or access denied.')
+        return
+
+    pending = await db.get_pending_requests(chat_id, limit=20)
+    pending_count = await db.get_pending_count(chat_id)
+    title = channel.get('chat_title', 'Unknown')
+
+    if not pending:
+        text = f'\U0001f4cb Pending Requests for {title}\n\nNo pending requests at the moment.'
+        buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    text = f'\U0001f4cb Pending Requests for {title}\n\nTotal: {pending_count}\n\n'
+    buttons = []
+    for req in pending:
+        name = req.get('first_name', 'Unknown')
+        uname = f" (@{req.get('username')})" if req.get('username') else ""
+        uid = req.get('user_id')
+        text += f"\u2022 {name}{uname} (ID: {uid})\n"
+        buttons.append([
+            InlineKeyboardButton(f'\u2705 {name[:15]}', callback_data=f'approve_one:{chat_id}:{uid}'),
+            InlineKeyboardButton(f'\u274c {name[:15]}', callback_data=f'decline_one:{chat_id}:{uid}'),
+        ])
+
+    if pending_count > 20:
+        text += f'\n... and {pending_count - 20} more'
+
+    if pending_count > 0:
+        buttons.append([
+            InlineKeyboardButton(f'\u2705 Approve All ({pending_count})', callback_data=f'batch_approve:{chat_id}'),
+            InlineKeyboardButton('\u274c Decline All', callback_data=f'decline_all:{chat_id}'),
+        ])
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')])
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -228,6 +273,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('start_drip:'):
             chat_id = int(data.split(':')[1])
             await handle_start_drip(query, context, db, chat_id)
+
+        elif data.startswith('pending_requests:'):
+            chat_id = int(data.split(':')[1])
+            await show_pending_requests(query, context, db, chat_id, user_id)
 
         elif data.startswith('decline_all:'):
             chat_id = int(data.split(':')[1])
