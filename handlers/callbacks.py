@@ -57,7 +57,13 @@ async def show_channel_settings(query, db, chat_id, user_id):
     auto = channel.get('auto_approve', True)
     welcome_dm = channel.get('welcome_dm_enabled', True)
     force_sub = channel.get('force_subscribe_enabled', False)
-    pending_db = await db.get_pending_count(chat_id)
+    # Get live pending count from Telegram API
+    pending_db = 0
+    try:
+        chat_info = await context.bot.get_chat(chat_id)
+        pending_db = getattr(chat_info, 'pending_join_request_count', 0) or 0
+    except Exception:
+        pending_db = await db.get_pending_count(chat_id)
     pending = pending_db if pending_db is not None else channel.get('pending_requests', 0)
     support = channel.get('support_username', '')
 
@@ -116,8 +122,20 @@ async def show_pending_requests(query, context, db, chat_id, user_id):
         await query.edit_message_text('Channel not found or access denied.')
         return
 
+    # Try to get actual pending count from Telegram API
+    telegram_pending = 0
+    try:
+        chat_info = await context.bot.get_chat(chat_id)
+        telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
+    except Exception as e:
+        logger.warning(f'Could not get Telegram pending count for {chat_id}: {e}')
+
     pending = await db.get_pending_requests(chat_id, limit=20)
     pending_count = await db.get_pending_count(chat_id)
+
+    # If Telegram shows more pending than our DB, note the discrepancy
+    if telegram_pending > pending_count:
+        pending_count = telegram_pending
     title = channel.get('chat_title', 'Unknown')
 
     if not pending:
@@ -165,7 +183,35 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        if data == 'my_channels':
+        if data == 'superadmin_panel':
+            from handlers.admin_panel import superadmin_handler
+            # superadmin_handler expects update.message, but we have callback_query
+            # Rebuild the superadmin panel inline
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.edit_message_text('Access denied.')
+                return
+            stats = await db.get_platform_stats()
+            text = ('\U0001f451 SUPERADMIN PANEL\n\n'
+                    f'\U0001f465 Channel Owners: {stats.get("total_owners", 0)}\n'
+                    f'\U0001f4e2 Total Channels: {stats.get("total_channels", 0)}\n'
+                    f'\U0001f9ec Active Clones: {stats.get("active_clones", 0)}\n'
+                    f'\U0001f464 End Users: {stats.get("total_users", 0)}\n'
+                    f'\U0001f48e Premium: {stats.get("premium_owners", 0)}\n')
+            buttons = [
+                [InlineKeyboardButton('\U0001f4ca Full Analytics', callback_data='sa_analytics')],
+                [InlineKeyboardButton('\U0001f465 Manage Owners', callback_data='sa_manage_owners')],
+                [InlineKeyboardButton('\U0001f4e2 Manage Channels', callback_data='sa_manage_channels')],
+                [InlineKeyboardButton('\U0001f9ec Manage Clones', callback_data='sa_manage_clones')],
+                [InlineKeyboardButton('\U0001f4e2 Platform Broadcast', callback_data='sa_platform_broadcast')],
+                [InlineKeyboardButton('\U0001f48e Manage Subs', callback_data='sa_manage_subs')],
+                [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
+                [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
+                [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
+                [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data == 'my_channels':
             await show_my_channels(query, db, user_id)
 
         elif data == 'admin_panel' or data == 'dashboard':
@@ -596,11 +642,15 @@ async def show_clone_settings(query, db, clone_id, user_id):
         await query.edit_message_text('Clone not found.')
         return
 
-    status = clone.get('status', 'unknown')
+    is_active = clone.get('is_active', False)
+    status = 'active' if is_active else 'inactive'
     username = clone.get('bot_username', 'unknown')
+    error = clone.get('last_error', '')
     text = (f'\U0001f916 Clone: @{username}\n'
-            f'Status: {status}\n'
+            f'Status: {"\u2705 Active" if is_active else "\u23f8 Inactive"}\n'
             f"Created: {clone.get('created_at', 'N/A')}\n")
+    if error:
+        text += f'Last Error: {error[:100]}\n'
 
     buttons = []
     if status == 'active':
@@ -622,18 +672,22 @@ async def handle_activate_clone(query, context, db, clone_id):
     if clone_mgr:
         try:
             await clone_mgr.start_clone(clone_id, clone['bot_token'], clone['owner_id'])
-            await db.update_clone_status(clone_id, status='active')
+            await db.update_clone_status(clone_id, is_active=True)
             await query.answer('Clone activated!', show_alert=True)
         except Exception as e:
             await query.answer(f'Failed: {str(e)[:100]}', show_alert=True)
-    await show_clone_settings(query, db, clone_id, query.from_user.id)
+    try:
+        await show_clone_settings(query, db, clone_id, query.from_user.id)
+    except Exception as e:
+        if 'not modified' not in str(e).lower():
+            raise
 
 
 async def handle_pause_clone(query, context, db, clone_id):
     clone_mgr = context.application.bot_data.get('clone_manager')
     if clone_mgr:
         await clone_mgr.stop_clone(clone_id)
-    await db.update_clone_status(clone_id, status='paused')
+    await db.update_clone_status(clone_id, is_active=False)
     await query.answer('Clone paused', show_alert=True)
     await show_clone_settings(query, db, clone_id, query.from_user.id)
 
@@ -691,8 +745,15 @@ async def handle_verify_force_sub(query, context, db, chat_id, user_id):
             text += f"\u2022 {ch.get('title', 'Channel')}\n"
             if ch.get('url'):
                 buttons.append([InlineKeyboardButton(f"\U0001f4e2 Join {ch.get('title', '')}", url=ch['url'])])
+        text += '\nPlease join all channels above, then click verify.'
         buttons.append([InlineKeyboardButton("\u2705 I've Joined \u2014 Verify Me", callback_data=f'verify_force_sub:{chat_id}')])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        try:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as e:
+            if 'not modified' in str(e).lower():
+                await query.answer('You still need to join all required channels!', show_alert=True)
+            else:
+                raise
         return
 
     try:
