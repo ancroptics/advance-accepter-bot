@@ -34,6 +34,9 @@ async def show_premium_info(update, context):
     db = context.application.bot_data.get('db')
     owner = await db.get_owner(user_id)
     current_tier = owner['tier'] if owner else 'free'
+    is_superadmin = user_id in config.SUPERADMIN_IDS
+    if is_superadmin:
+        current_tier = 'superadmin'
     text = (
         '\U0001f48e PREMIUM PLANS\n\n'
         f'Current Plan: {current_tier.upper()}\n\n'
@@ -53,7 +56,9 @@ async def show_premium_info(update, context):
         '\u2022 Priority support\n\u2022 Everything in Premium\n'
     )
     buttons = []
-    if current_tier == 'free':
+    if is_superadmin:
+        buttons.append([InlineKeyboardButton('\U0001f451 SUPERADMIN - All Features Unlocked', callback_data='dashboard')])
+    elif current_tier == 'free':
         buttons.append([InlineKeyboardButton('\U0001f48e Upgrade to Premium', callback_data='upgrade_to:premium')])
         buttons.append([InlineKeyboardButton('\U0001f4bc Upgrade to Business', callback_data='upgrade_to:business')])
     elif current_tier == 'premium':
@@ -62,41 +67,47 @@ async def show_premium_info(update, context):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
-async def show_upgrade_instructions(update, context, tier):
+async def handle_upgrade(update, context):
     query = update.callback_query
+    tier = query.data.split(':')[1]
     price = '199' if tier == 'premium' else '499'
+    upi_id = getattr(config, 'UPI_ID', 'payment@upi')
     text = (
         f'\U0001f48e {tier.upper()} Plan - \u20b9{price}/month\n\n'
         'Pay via UPI:\n'
-        '\U0001f4f1 UPI ID: payment@upi\n\n'
+        f'\U0001f4f1 UPI ID: {upi_id}\n\n'
         'After payment, send screenshot here.\n'
         'Admin will verify and activate within 1 hour.\n\n'
-        'Or contact support for other payment methods.'
+        '\u26a0\ufe0f Do NOT send fake screenshots.'
     )
-    buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='premium_info')]]
+    buttons = [
+        [InlineKeyboardButton('\U0001f519 Back', callback_data='premium_info')],
+    ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+def get_tier_features(tier):
+    return TIER_FEATURES.get(tier, TIER_FEATURES['free'])
 
 
 @superadmin_only
 async def activate_premium_handler(update, context):
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text('Usage: /activate_premium <user_id> <days>')
+        await update.message.reply_text('Usage: /activate_premium <user_id> <tier> [days]')
         return
     try:
         target_id = int(args[0])
-        days = int(args[1])
-    except ValueError:
-        await update.message.reply_text('Invalid user_id or days.')
-        return
-    tier = args[2] if len(args) > 2 else 'premium'
-    db = context.application.bot_data.get('db')
-    await db.activate_premium(target_id, tier, days)
-    await update.message.reply_text(f'\u2705 Activated {tier} for user {target_id} for {days} days.')
-    try:
-        await context.bot.send_message(target_id, f'\U0001f389 Your {tier.upper()} plan has been activated for {days} days!')
-    except Exception:
-        pass
+        tier = args[1].lower()
+        days = int(args[2]) if len(args) > 2 else 30
+        if tier not in ('premium', 'business'):
+            await update.message.reply_text('Tier must be premium or business.')
+            return
+        db = context.application.bot_data.get('db')
+        await db.activate_premium(target_id, tier, days)
+        await update.message.reply_text(f'\u2705 Activated {tier} for user {target_id} for {days} days.')
+    except Exception as e:
+        await update.message.reply_text(f'Error: {e}')
 
 
 @superadmin_only
@@ -107,9 +118,8 @@ async def deactivate_premium_handler(update, context):
         return
     try:
         target_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text('Invalid user_id.')
-        return
-    db = context.application.bot_data.get('db')
-    await db.deactivate_premium(target_id)
-    await update.message.reply_text(f'\u2705 Deactivated premium for user {target_id}.')
+        db = context.application.bot_data.get('db')
+        await db.deactivate_premium(target_id)
+        await update.message.reply_text(f'\u2705 Deactivated premium for user {target_id}.')
+    except Exception as e:
+        await update.message.reply_text(f'Error: {e}')
