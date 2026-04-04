@@ -124,6 +124,27 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers.force_subscribe import start_add_force_sub_channel, FORCE_SUB_INPUT
             return await start_add_force_sub_channel(update, context, chat_id)
 
+        elif data.startswith('batch_approve:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            count_str = parts[2]
+            count = -1 if count_str == 'all' else int(count_str)
+            from handlers.batch_approve import execute_batch_approve
+            await execute_batch_approve(update, context, chat_id, count)
+
+        elif data.startswith('start_drip:'):
+            chat_id = int(data.split(':')[1])
+            await query.edit_message_text(
+                '\U0001f4a7 DRIP APPROVE\n\n'
+                'Drip mode will gradually approve pending requests over time.\n\n'
+                'Coming soon! For now, use batch approve.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data=f'pending_requests:{chat_id}')]]))
+
+        elif data.startswith('decline_all:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.batch_approve import decline_all_pending
+            await decline_all_pending(update, context, chat_id)
+
         elif data.startswith('verify_force_sub:'):
             chat_id = int(data.split(':')[1])
             from handlers.force_subscribe import verify_force_subscribe
@@ -215,7 +236,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = '\U0001f9ec CLONE BOT\n\nCreate your own branded version of this bot!\n\n'
                 if clones:
                     for cl in clones:
-                        text += f"@{cl.get('bot_username', '?')} - {'Active' if cl.get('is_active') else 'Inactive'}\n"
+                        status_text = 'Active' if cl.get('is_active') else 'Inactive'
+                        text += f"@{cl.get('bot_username', '?')} - {status_text}\n"
                 text += '\nSend /clone <bot_token> to create a new clone.'
                 await query.edit_message_text(text,
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
