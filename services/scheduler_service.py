@@ -1,132 +1,88 @@
 import logging
 import asyncio
-from datetime import datetime, timedelta
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
 class SchedulerService:
+    """Handles scheduled/drip approval of pending join requests."""
+
     def __init__(self, application):
         self.application = application
-        self.scheduler = AsyncIOScheduler()
+        self.running = False
+        self._task = None
 
-    def start(self):
-        """Start the scheduler with periodic jobs."""
-        try:
-            # Auto-approve force sub requests after 24 hours
-            self.scheduler.add_job(
-                self._auto_approve_expired_force_sub,
-                'interval',
-                hours=1,
-                id='force_sub_auto_approve',
-                next_run_time=datetime.now() + timedelta(minutes=5),
-            )
-            # Sync pending requests from Telegram every 6 hours
-            self.scheduler.add_job(
-                self._sync_pending_from_telegram,
-                'interval',
-                hours=6,
-                id='sync_pending_requests',
-                next_run_time=datetime.now() + timedelta(minutes=10),
-            )
-            self.scheduler.start()
-            logger.info('Scheduler service started with force_sub_auto_approve and sync_pending jobs')
-        except Exception as e:
-            logger.error(f'Error starting scheduler: {e}')
+    async def start(self):
+        if self.running:
+            return
+        self.running = True
+        self._task = asyncio.create_task(self._run_loop())
+        logger.info("Drip scheduler started")
 
-    def stop(self):
-        """Stop the scheduler."""
-        try:
-            if self.scheduler.running:
-                self.scheduler.shutdown(wait=False)
-                logger.info('Scheduler stopped')
-        except Exception as e:
-            logger.error(f'Error stopping scheduler: {e}')
+    async def stop(self):
+        self.running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Drip scheduler stopped")
 
-    async def _auto_approve_expired_force_sub(self):
-        """Auto-approve join requests where force sub was required but 24h has passed."""
-        try:
-            db = self.application.bot_data.get('db')
-            if not db:
-                return
+    async def _run_loop(self):
+        while self.running:
+            try:
+                await self._process_drip_channels()
+            except Exception as e:
+                logger.exception(f"Drip scheduler error: {e}")
+            await asyncio.sleep(60)
 
-            # Find all pending requests with force_sub_required=TRUE that are older than 24h
-            expired = await db.get_expired_force_sub_requests(hours=24)
-            if not expired:
-                return
+    async def _process_drip_channels(self):
+        db = self.application.bot_data.get('db')
+        if not db:
+            return
 
-            logger.info(f'Auto-approving {len(expired)} expired force sub requests')
-            bot = self.application.bot
+        channels = await db.get_drip_channels()
+        for ch in channels:
+            chat_id = ch['chat_id']
+            actual_pending = ch.get('actual_pending', 0)
+            if actual_pending <= 0:
+                continue
 
-            for req in expired:
+            drip_rate = ch.get('drip_rate') or 5
+            drip_interval = ch.get('drip_interval') or 60
+
+            batch = await db.get_drip_batch(chat_id, drip_rate)
+            if not batch:
+                continue
+
+            approved = 0
+            dm_sent = 0
+            dm_failed = 0
+
+            for req in batch:
+                user_id = req['user_id']
                 try:
-                    user_id = req['user_id']
-                    chat_id = req['chat_id']
-
-                    # Try to approve the join request on Telegram
-                    try:
-                        await bot.approve_chat_join_request(chat_id, user_id)
-                    except Exception as e:
-                        err = str(e).lower()
-                        if 'hide_requester_missing' in err or 'user_already_participant' in err:
-                            # Already joined or request expired on Telegram side
-                            pass
-                        else:
-                            logger.warning(f'Could not approve expired force sub for {user_id} in {chat_id}: {e}')
-
-                    # Update DB status
-                    await db.update_join_request_after_approve(
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        dm_sent=False,
-                        processed_by='force_sub_expired_24h',
+                    await self.application.bot.approve_chat_join_request(
+                        chat_id=chat_id, user_id=user_id
                     )
+                    await db.update_join_request_status(user_id, chat_id, 'approved', 'drip')
+                    approved += 1
 
-                    # Try to send welcome DM
-                    channel = await db.get_channel(chat_id)
-                    if channel and channel.get('welcome_dm_enabled', True):
+                    if ch.get('welcome_dm_enabled') and ch.get('welcome_message'):
                         try:
-                            welcome_text = channel.get('welcome_message', 'Welcome! \U0001f389')
-                            first_name = req.get('first_name', 'there')
-                            welcome_text = welcome_text.replace('{first_name}', first_name or 'there')
-                            welcome_text = welcome_text.replace('{channel_name}', channel.get('chat_title', ''))
-                            welcome_text = welcome_text.replace('{user_id}', str(user_id))
-                            await bot.send_message(user_id, welcome_text)
+                            await self.application.bot.send_message(
+                                chat_id=user_id,
+                                text=ch['welcome_message']
+                            )
+                            dm_sent += 1
                         except Exception:
-                            pass  # DM may fail if user blocked bot
-
-                    await asyncio.sleep(0.5)  # Rate limit
+                            dm_failed += 1
                 except Exception as e:
-                    logger.error(f'Error auto-approving expired force sub: {e}')
+                    logger.warning(f"Drip approve failed for {user_id} in {chat_id}: {e}")
+                    await db.update_join_request_status(user_id, chat_id, 'failed', 'drip')
 
-        except Exception as e:
-            logger.error(f'Error in _auto_approve_expired_force_sub: {e}')
-
-    async def _sync_pending_from_telegram(self):
-        """Sync pending join request COUNTS from Telegram API.
-        Note: Telegram Bot API cannot list individual pending requests.
-        We can only get the count via getChat and sync it."""
-        try:
-            db = self.application.bot_data.get('db')
-            if not db:
-                return
-
-            bot = self.application.bot
-            channels = await db.get_all_active_channels()
-            if not channels:
-                return
-
-            for channel in channels:
-                chat_id = channel['chat_id']
-                try:
-                    chat_info = await bot.get_chat(chat_id)
-                    telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
-                    await db.update_channel_setting(chat_id, 'pending_requests', telegram_pending)
-                    await asyncio.sleep(1)  # Rate limit between channels
-                except Exception as e:
-                    if 'chat_admin_required' not in str(e).lower():
-                        logger.warning(f'Error syncing pending count for {chat_id}: {e}')
-
-        except Exception as e:
-            logger.error(f'Error in _sync_pending_from_telegram: {e}')
+            if approved > 0:
+                await db.update_channel_stats_after_batch(chat_id, approved, dm_sent, dm_failed)
+                logger.info(f"Drip: approved {approved} in {chat_id}")
