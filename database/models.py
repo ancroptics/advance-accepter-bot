@@ -328,3 +328,20 @@ class DatabaseModels:
     async def deactivate_premium(self, user_id):
         return await self.db.execute(
             "UPDATE channel_owners SET tier = 'free' WHERE user_id = $1", user_id)
+
+    async def get_expired_force_sub_requests(self, hours=24):
+        """Get pending join requests where force sub was required but time has expired."""
+        return await self.db.fetch(
+            """SELECT * FROM join_requests 
+            WHERE status = 'pending' 
+            AND force_sub_required = TRUE 
+            AND force_sub_completed = FALSE
+            AND request_time < NOW() - INTERVAL '1 hour' * $1
+            ORDER BY request_time
+            LIMIT 200""", hours)
+
+    async def get_all_active_channels(self):
+        """Get all active channels."""
+        return await self.db.fetch(
+            "SELECT * FROM managed_channels WHERE is_active = TRUE AND bot_is_admin = TRUE")
+
