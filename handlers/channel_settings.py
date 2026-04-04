@@ -4,7 +4,6 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-
 async def show_channel_settings(update, context, chat_id, edit=False):
     db = context.application.bot_data.get('db')
     channel = await db.get_channel(chat_id)
@@ -23,13 +22,29 @@ async def show_channel_settings(update, context, chat_id, edit=False):
     watermark = '\u2705 ON' if channel.get('watermark_enabled') else '\u274c OFF'
     force_sub = '\u2705 ON' if channel.get('force_subscribe_enabled') else '\u274c OFF'
     cross_promo = '\u2705 ON' if channel.get('cross_promo_enabled') else '\u274c OFF'
-    pending = channel.get('pending_requests', 0)
+
+    # Get REAL pending count from database
+    pending = await db.get_pending_count(chat_id)
+    # Also update the cached column
+    try:
+        await db.update_channel_setting(chat_id, 'pending_requests', pending)
+    except Exception:
+        pass
+
+    # Drip settings display
+    drip_info = ''
+    if approve_mode.lower() == 'drip':
+        drip_speed = channel.get('drip_speed', 'medium')
+        drip_quantity = channel.get('drip_quantity', 50)
+        drip_interval = channel.get('drip_interval', 30)
+        drip_info = f'Drip Speed: {drip_speed.capitalize()} | Batch: {drip_quantity} every {drip_interval}min\n'
 
     text = (
         f'\u2699\ufe0f MANAGE: {channel["chat_title"]}\n\n'
         f'\u2501\u2501\u2501 JOIN REQUESTS \u2501\u2501\u2501\n'
         f'Auto-Approve: {auto_approve}\n'
         f'Mode: {approve_mode}\n'
+        f'{drip_info}'
         f'Pending: {pending:,}\n\n'
         f'\u2501\u2501\u2501 WELCOME DM \u2501\u2501\u2501\n'
         f'Welcome DM: {welcome_dm}\n\n'
