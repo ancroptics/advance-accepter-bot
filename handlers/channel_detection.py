@@ -5,7 +5,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-
 def extract_status_change(chat_member_update: ChatMemberUpdated):
     status_change = chat_member_update.difference().get('status')
     if status_change is None:
@@ -13,11 +12,13 @@ def extract_status_change(chat_member_update: ChatMemberUpdated):
     old_status, new_status = status_change
     return old_status, new_status
 
-
 async def channel_detection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        old_status, new_status = extract_status_change(update.my_chat_member)
-        if old_status is None and new_status is None:
+        result = extract_status_change(update.my_chat_member)
+        if result is None:
+            return
+        old_status, new_status = result
+        if old_status is None:
             return
         chat = update.my_chat_member.chat
         from_user = update.my_chat_member.from_user
@@ -49,6 +50,12 @@ async def channel_detection_handler(update: Update, context: ContextTypes.DEFAUL
                 await db.update_channel_setting(chat.id, 'member_count', count)
             except Exception:
                 pass
+            # Scan for existing pending requests that were there before bot was added
+            try:
+                import asyncio
+                asyncio.create_task(process_existing_pending_requests(context, chat.id, from_user.id))
+            except Exception as e:
+                logger.error(f'Error scheduling existing request scan: {e}')
             # Notify owner
             pending = await db.get_pending_count(chat.id)
             try:
@@ -88,3 +95,80 @@ async def channel_detection_handler(update: Update, context: ContextTypes.DEFAUL
             await db.log_event('channel_disconnected', channel_id=chat.id)
     except Exception as e:
         logger.exception(f'Error in channel_detection_handler: {e}')
+
+async def process_existing_pending_requests(context, chat_id, owner_id):
+    """Process join requests that were already pending before bot became admin."""
+    db = context.application.bot_data.get('db')
+    if not db:
+        return
+    try:
+        pending_users = []
+        try:
+            response = await context.bot.get_chat_administrators(chat_id)
+            logger.info(f'Bot is admin in {chat_id}, checking for pending requests')
+        except Exception as e:
+            logger.warning(f'Cannot check admins for {chat_id}: {e}')
+        
+        # Use raw API call to get pending join requests
+        try:
+            import json
+            url = f'https://api.telegram.org/bot{context.bot.token}/getChatJoinRequests'
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json={'chat_id': chat_id}) as resp:
+                    data = await resp.json()
+                    if data.get('ok'):
+                        pending_users = data.get('result', [])
+                        logger.info(f'Found {len(pending_users)} existing pending requests in {chat_id}')
+                    else:
+                        logger.warning(f'getChatJoinRequests failed: {data}')
+        except Exception as e:
+            logger.error(f'Error fetching existing pending requests: {e}')
+            return
+        
+        # Save and optionally auto-approve each pending request
+        channel = await db.get_channel(chat_id)
+        auto_approve = channel.get('auto_approve', True) if channel else True
+        approve_mode = channel.get('approve_mode', 'instant') if channel else 'instant'
+        
+        approved_count = 0
+        saved_count = 0
+        for req in pending_users:
+            user = req.get('user', {})
+            user_id = user.get('id')
+            if not user_id:
+                continue
+            try:
+                await db.save_join_request(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    username=user.get('username'),
+                    first_name=user.get('first_name'),
+                    user_language=None,
+                )
+                saved_count += 1
+                
+                if auto_approve and approve_mode == 'instant':
+                    try:
+                        await context.bot.approve_chat_join_request(chat_id, user_id)
+                        await db.update_join_request_status(user_id, chat_id, 'approved', 'auto_existing')
+                        approved_count += 1
+                    except Exception as e:
+                        logger.debug(f'Could not approve existing request {user_id}: {e}')
+            except Exception as e:
+                logger.debug(f'Error processing existing request {user_id}: {e}')
+        
+        logger.info(f'Processed existing requests in {chat_id}: saved={saved_count}, approved={approved_count}')
+        
+        if saved_count > 0:
+            try:
+                await context.bot.send_message(
+                    owner_id,
+                    f'\U0001f50d Found {saved_count} existing pending requests in your channel!\n'
+                    f'\u2705 Auto-approved: {approved_count}\n\n'
+                    f'Use /dashboard to manage.'
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f'Error in process_existing_pending_requests: {e}')
