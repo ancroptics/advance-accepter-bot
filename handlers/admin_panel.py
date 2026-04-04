@@ -40,8 +40,7 @@ async def show_dashboard(update, context, edit=False):
             text += (f"\U0001f4e2 {ch['chat_title']}\n"
                      f"   \U0001f465 {ch.get('member_count', 0)} | \U0001f4cb {ch.get('pending_requests', 0)} pending\n"
                      f"   {auto}\n\n")
-            buttons.append([InlineKeyboardButton(f"\u2699\ufe0f Manage {ch['chat_title'][:20]}", callback_data=f"manage_channel:{ch['chat_id']}")])
-    else:
+            buttons.append([InlineKeyboardButton(f"\u2699\ufe0f Manage {ch['chat_title'][:20]}", callback_data=f"manage_channel:{ch['chat_id']}")])    else:
         text += 'No channels yet. Add the bot as admin to a channel!\n\n'
     buttons.extend([
         [InlineKeyboardButton('\U0001f4e2 Broadcast', callback_data='broadcast'),
@@ -86,6 +85,7 @@ async def superadmin_handler(update, context):
         [InlineKeyboardButton('\U0001f4e2 Platform Broadcast', callback_data='sa_platform_broadcast')],
         [InlineKeyboardButton('\U0001f48e Manage Subs', callback_data='sa_manage_subs')],
         [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
+        [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -138,6 +138,19 @@ async def sa_platform_broadcast(update, context):
     query = update.callback_query
     await query.edit_message_text('Platform broadcast: Use /broadcast_all <message>',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
+async def sa_edit_support_username(update, context):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    current = config.SUPPORT_USERNAME or 'Not set'
+    context.user_data['awaiting_support_username'] = True
+    await query.edit_message_text(
+        f'\U0001f4ac EDIT SUPPORT USERNAME\n\n'
+        f'Current: @{current}\n\n'
+        f'Send the new support username (without @).\n'
+        f'Type /cancel to cancel.',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='dashboard')]])
+    )
 
 async def sa_manage_subscriptions(update, context):
     query = update.callback_query
