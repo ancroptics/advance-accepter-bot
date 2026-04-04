@@ -25,6 +25,9 @@ def owner_only(func):
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
+        # Superadmin bypass
+        if user_id in config.SUPERADMIN_IDS:
+            return await func(update, context, *args, **kwargs)
         db = context.application.bot_data.get('db')
         if not db:
             await update.effective_message.reply_text('\u274c Database not available.')
@@ -67,6 +70,10 @@ def channel_context(func):
             await update.effective_message.reply_text('\u26a0\ufe0f No channel selected. Use /channels to pick one.')
             return
         channel = await db.get_channel(channel_id)
+        # Superadmin bypass
+        if user_id in config.SUPERADMIN_IDS:
+            context.user_data['channel_id'] = channel_id
+            return await func(update, context, *args, **kwargs)
         if not channel or channel['owner_id'] != user_id:
             await update.effective_message.reply_text('\u26d4 You do not own this channel.')
             return
@@ -79,6 +86,9 @@ def premium_required(func):
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
+        # Superadmin bypass - full access to all features
+        if user_id in config.SUPERADMIN_IDS:
+            return await func(update, context, *args, **kwargs)
         db = context.application.bot_data.get('db')
         if not db:
             await update.effective_message.reply_text('\u274c Database not available.')
