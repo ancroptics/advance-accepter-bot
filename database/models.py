@@ -153,6 +153,13 @@ class DatabaseModels:
         val = await self.db.fetchval(
             "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id)
         return val or 0
+    async def cleanup_stale_pending(self, chat_id):
+        """Mark stale pending requests as expired (when Telegram shows 0 pending but DB has records)."""
+        await self.db.execute(
+            "UPDATE join_requests SET status = 'expired' WHERE chat_id = $1 AND status = 'pending'",
+            chat_id
+        )
+
 
     async def get_pending_requests(self, chat_id, limit=100):
         return await self.db.fetch("""
