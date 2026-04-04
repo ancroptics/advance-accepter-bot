@@ -2,281 +2,258 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database.models import DatabaseModels
+import config
 
 logger = logging.getLogger(__name__)
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not query:
-        return
-    try:
-        await query.answer()
-    except Exception:
-        pass
-
+    await query.answer()
     data = query.data
     user_id = query.from_user.id
-    db: DatabaseModels = context.application.bot_data.get('db')
-    if not db:
-        await query.edit_message_text('Bot is still initializing. Please try again.')
-        return
+    db = context.application.bot_data.get('db')
 
     try:
         if data == 'dashboard':
             from handlers.admin_panel import show_dashboard
             await show_dashboard(update, context, edit=True)
+
+        elif data == 'premium_info':
+            from handlers.premium import show_premium_info
+            await show_premium_info(update, context)
+
+        elif data.startswith('upgrade_to:'):
+            from handlers.premium import handle_upgrade
+            await handle_upgrade(update, context)
+
         elif data.startswith('manage_channel:'):
             chat_id = int(data.split(':')[1])
-            from handlers.channel_settings import show_channel_settings
-            await show_channel_settings(update, context, chat_id, edit=True)
-        elif data.startswith('toggle_auto_approve:'):
+            context.user_data['active_channel_id'] = chat_id
+            channel = await db.get_channel(chat_id)
+            if not channel:
+                await query.edit_message_text('Channel not found.',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+                return
+            auto = '\u2705 ON' if channel.get('auto_approve') else '\u274c OFF'
+            mode = channel.get('approve_mode', 'instant').title()
+            text = (f'\u2699\ufe0f MANAGE: {channel["chat_title"]}\n\n'
+                    f'Auto-Approve: {auto}\n'
+                    f'Mode: {mode}\n'
+                    f'Members: {channel.get("member_count", 0)}\n'
+                    f'Pending: {channel.get("pending_requests", 0)}\n')
+            buttons = [
+                [InlineKeyboardButton('\u2705 Toggle Auto-Approve', callback_data=f'toggle_auto:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4dd Edit Welcome DM', callback_data=f'edit_welcome:{chat_id}')],
+                [InlineKeyboardButton('\U0001f512 Force Subscribe', callback_data=f'force_sub_menu:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4ca Analytics', callback_data=f'analytics:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4e2 Broadcast', callback_data=f'broadcast_to:{chat_id}')],
+                [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('toggle_auto:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
-            if channel and channel['owner_id'] == user_id:
-                new_val = not channel['auto_approve']
-                await db.update_channel_setting(chat_id, 'auto_approve', new_val)
-                from handlers.channel_settings import show_channel_settings
-                await show_channel_settings(update, context, chat_id, edit=True)
-        elif data.startswith('approve_mode:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            mode = parts[2]
-            await db.update_channel_setting(chat_id, 'approve_mode', mode)
-            from handlers.channel_settings import show_channel_settings
-            await show_channel_settings(update, context, chat_id, edit=True)
-        elif data.startswith('toggle_welcome_dm:'):
-            chat_id = int(data.split(':')[1])
-            channel = await db.get_channel(chat_id)
-            if channel and channel['owner_id'] == user_id:
-                new_val = not channel['welcome_dm_enabled']
-                await db.update_channel_setting(chat_id, 'welcome_dm_enabled', new_val)
-                from handlers.channel_settings import show_channel_settings
-                await show_channel_settings(update, context, chat_id, edit=True)
-        elif data.startswith('toggle_watermark:'):
-            chat_id = int(data.split(':')[1])
-            owner = await db.get_owner(user_id)
-            if owner and owner['tier'] != 'free':
-                channel = await db.get_channel(chat_id)
-                if channel and channel['owner_id'] == user_id:
-                    new_val = not channel['watermark_enabled']
-                    await db.update_channel_setting(chat_id, 'watermark_enabled', new_val)
-                    from handlers.channel_settings import show_channel_settings
-                    await show_channel_settings(update, context, chat_id, edit=True)
-            else:
-                await query.answer('Watermark can only be disabled with Premium!', show_alert=True)
-        elif data.startswith('pending_requests:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.batch_approve import show_pending_menu
-            await show_pending_menu(update, context, chat_id)
-        elif data.startswith('batch_approve:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            count = int(parts[2]) if parts[2] != 'all' else -1
-            from handlers.batch_approve import execute_batch_approve
-            await execute_batch_approve(update, context, chat_id, count)
-        elif data.startswith('start_drip:'):
-            chat_id = int(data.split(':')[1])
-            channel = await db.get_channel(chat_id)
-            if channel and channel['owner_id'] == user_id:
-                await db.update_channel_setting(chat_id, 'approve_mode', 'drip')
-                await query.edit_message_text(
-                    f'Drip approve started!\nRate: {channel["drip_rate"]} every {channel["drip_interval"]}min',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
-                )
-        elif data.startswith('decline_all:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.batch_approve import decline_all_pending
-            await decline_all_pending(update, context, chat_id)
+            new_val = not channel.get('auto_approve', True)
+            await db.update_channel_setting(chat_id, 'auto_approve', new_val)
+            status = '\u2705 ON' if new_val else '\u274c OFF'
+            await query.edit_message_text(f'Auto-Approve is now {status}',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
+
         elif data.startswith('edit_welcome:'):
             chat_id = int(data.split(':')[1])
             context.user_data['editing_welcome_for'] = chat_id
-        elif data.startswith('preview_welcome:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.welcome_dm import preview_welcome
-            await preview_welcome(update, context, chat_id)
-        elif data.startswith('force_sub_setup:'):
+            channel = await db.get_channel(chat_id)
+            current = channel.get('welcome_message', 'Welcome {name}!')
+            await query.edit_message_text(
+                f'\U0001f4dd EDIT WELCOME DM\n\n'
+                f'Current message:\n{current}\n\n'
+                f'Variables: {{name}}, {{username}}, {{channel}}, {{date}}\n\n'
+                f'Send your new welcome message:',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data=f'manage_channel:{chat_id}')]]))
+
+        elif data.startswith('force_sub_menu:'):
             chat_id = int(data.split(':')[1])
             from handlers.force_subscribe import show_force_sub_menu
             await show_force_sub_menu(update, context, chat_id)
+
         elif data.startswith('toggle_force_sub:'):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
-            if channel and channel['owner_id'] == user_id:
-                new_val = not channel['force_subscribe_enabled']
-                await db.update_channel_setting(chat_id, 'force_subscribe_enabled', new_val)
-                from handlers.force_subscribe import show_force_sub_menu
-                await show_force_sub_menu(update, context, chat_id)
+            new_val = not channel.get('force_subscribe_enabled', False)
+            await db.update_channel_setting(chat_id, 'force_subscribe_enabled', new_val)
+            from handlers.force_subscribe import show_force_sub_menu
+            await show_force_sub_menu(update, context, chat_id)
+
+        elif data.startswith('add_force_sub_ch:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.force_subscribe import start_add_force_sub_channel, FORCE_SUB_INPUT
+            return await start_add_force_sub_channel(update, context, chat_id)
+
         elif data.startswith('verify_force_sub:'):
             chat_id = int(data.split(':')[1])
             from handlers.force_subscribe import verify_force_subscribe
             await verify_force_subscribe(update, context, chat_id)
-        elif data.startswith('add_force_sub:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.force_subscribe import add_force_sub
-            await add_force_sub(update, context, chat_id)
-        elif data.startswith('remove_force_sub:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.force_subscribe import remove_force_sub
-            await remove_force_sub(update, context, chat_id)
-        elif data.startswith('rm_force_sub:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            remove_ch_id = int(parts[2])
-            from handlers.force_subscribe import confirm_remove_force_sub
-            await confirm_remove_force_sub(update, context, chat_id, remove_ch_id)
-        elif data.startswith('cross_promo_setup:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.cross_promo import show_cross_promo_menu
-            await show_cross_promo_menu(update, context, chat_id)
-        elif data.startswith('toggle_cross_promo:'):
-            chat_id = int(data.split(':')[1])
-            channel = await db.get_channel(chat_id)
-            if channel and channel['owner_id'] == user_id:
-                new_val = not channel['cross_promo_enabled']
-                await db.update_channel_setting(chat_id, 'cross_promo_enabled', new_val)
-                from handlers.cross_promo import show_cross_promo_menu
-                await show_cross_promo_menu(update, context, chat_id)
+
         elif data.startswith('analytics:'):
             chat_id = int(data.split(':')[1])
-            from handlers.analytics_view import show_channel_analytics
-            await show_channel_analytics(update, context, chat_id)
+            channel = await db.get_channel(chat_id)
+            stats = await db.get_channel_analytics(chat_id)
+            text = (f'\U0001f4ca ANALYTICS: {channel["chat_title"]}\n\n'
+                    f'Total Requests: {stats.get("total_requests", 0)}\n'
+                    f'Approved: {stats.get("approved", 0)}\n'
+                    f'Pending: {stats.get("pending", 0)}\n'
+                    f'Declined: {stats.get("declined", 0)}\n'
+                    f'Today: {stats.get("today", 0)}\n'
+                    f'This Week: {stats.get("this_week", 0)}\n')
+            await query.edit_message_text(text,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
+
         elif data == 'analytics_overview':
-            from handlers.analytics_view import show_analytics_overview
-            await show_analytics_overview(update, context)
-        elif data == 'premium_info':
-            from handlers.premium import show_premium_info
-            await show_premium_info(update, context)
-        elif data.startswith('upgrade_to:'):
-            tier = data.split(':')[1]
-            from handlers.premium import show_upgrade_instructions
-            await show_upgrade_instructions(update, context, tier)
-        elif data == 'clone_bot_menu':
-            from handlers.clone_bot import show_clone_menu
-            await show_clone_menu(update, context)
-        elif data == 'clone_send_token':
-            from handlers.clone_bot import prompt_clone_token
-            await prompt_clone_token(update, context)
-        elif data.startswith('activate_clone:'):
-            clone_id = int(data.split(':')[1])
-            from handlers.clone_bot import activate_clone
-            await activate_clone(update, context, clone_id)
-        elif data.startswith('pause_clone:'):
-            clone_id = int(data.split(':')[1])
-            from handlers.clone_bot import pause_clone
-            await pause_clone(update, context, clone_id)
-        elif data.startswith('delete_clone:'):
-            clone_id = int(data.split(':')[1])
-            from handlers.clone_bot import delete_clone
-            await delete_clone(update, context, clone_id)
+            channels = await db.get_owner_channels(user_id)
+            text = '\U0001f4ca ANALYTICS OVERVIEW\n\n'
+            for ch in (channels or []):
+                stats = await db.get_channel_analytics(ch['chat_id'])
+                text += f"{ch['chat_title']}: {stats.get('total_requests', 0)} total, {stats.get('pending', 0)} pending\n"
+            if not channels:
+                text += 'No channels yet.\n'
+            await query.edit_message_text(text,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
+        elif data.startswith('broadcast_to:'):
+            chat_id = int(data.split(':')[1])
+            context.user_data['broadcast_channel'] = chat_id
+            await query.edit_message_text(
+                '\U0001f4e2 BROADCAST\n\nSend the message you want to broadcast to all users who joined via this channel:',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data=f'manage_channel:{chat_id}')]]))
+
+        elif data == 'broadcast':
+            channels = await db.get_owner_channels(user_id)
+            if not channels:
+                await query.edit_message_text('No channels.',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+                return
+            buttons = []
+            for ch in channels:
+                buttons.append([InlineKeyboardButton(ch['chat_title'], callback_data=f'broadcast_to:{ch["chat_id"]}')])
+            buttons.append([InlineKeyboardButton('Back', callback_data='dashboard')])
+            await query.edit_message_text('Select a channel to broadcast to:',
+                reply_markup=InlineKeyboardMarkup(buttons))
+
         elif data == 'templates_menu':
-            from handlers.template_mgmt import show_templates_menu
-            await show_templates_menu(update, context)
+            await query.edit_message_text('\U0001f4dd TEMPLATES\n\nComing soon! Templates will let you create reusable welcome messages.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
         elif data == 'auto_poster_menu':
-            from handlers.auto_poster import show_auto_poster_menu
-            await show_auto_poster_menu(update, context)
-        elif data.startswith('language_setup:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.language_mgmt import show_language_menu
-            await show_language_menu(update, context, chat_id)
-        elif data.startswith('set_promo_cat:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            category = parts[2]
-            await db.update_channel_setting(chat_id, 'cross_promo_category', category)
-            from handlers.cross_promo import show_cross_promo_menu
-            await show_cross_promo_menu(update, context, chat_id)
-        elif data.startswith('export_csv:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.analytics_view import export_channel_csv
-            await export_channel_csv(update, context, chat_id)
-        elif data.startswith('refresh_analytics:'):
-            chat_id = int(data.split(':')[1])
-            from handlers.analytics_view import show_channel_analytics
-            await show_channel_analytics(update, context, chat_id)
+            await query.edit_message_text('\U0001f916 AUTO POSTER\n\nComing soon! Schedule automatic posts to your channels.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
+        elif data == 'referral_info':
+            owner = await db.get_owner(user_id)
+            ref_code = owner.get('referral_code', 'N/A') if owner else 'N/A'
+            ref_count = owner.get('referral_count', 0) if owner else 0
+            coins = owner.get('coins', 0) if owner else 0
+            bot_username = config.BOT_USERNAME or (await context.bot.get_me()).username
+            text = (f'\U0001f517 REFERRAL PROGRAM\n\n'
+                    f'Your link: https://t.me/{bot_username}?start=ref_{ref_code}\n'
+                    f'Referrals: {ref_count}\n'
+                    f'Coins earned: {coins}\n\n'
+                    f'Earn {config.DEFAULT_REFERRAL_COINS} coins per referral!')
+            await query.edit_message_text(text,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
+        elif data.startswith('cross_promo_setup:'):
+            await query.edit_message_text('\U0001f504 CROSS-PROMOTION\n\nComing soon!',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
+        elif data == 'clone_bot_menu':
+            owner = await db.get_owner(user_id)
+            tier = owner.get('tier', 'free') if owner else 'free'
+            is_superadmin = user_id in config.SUPERADMIN_IDS
+            if tier == 'free' and not is_superadmin:
+                await query.edit_message_text('\U0001f9ec CLONE BOT\n\nThis feature requires Premium.\nUpgrade to create your own branded bot!',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton('\U0001f48e Upgrade', callback_data='premium_info')],
+                        [InlineKeyboardButton('Back', callback_data='dashboard')]
+                    ]))
+            else:
+                clones = await db.get_owner_clones(user_id)
+                text = '\U0001f9ec CLONE BOT\n\nCreate your own branded version of this bot!\n\n'
+                if clones:
+                    for cl in clones:
+                        text += f"@{cl.get('bot_username', '?')} - {'Active' if cl.get('is_active') else 'Inactive'}\n"
+                text += '\nSend /clone <bot_token> to create a new clone.'
+                await query.edit_message_text(text,
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
         elif data == 'help':
             from handlers.user_commands import help_handler
             await help_handler(update, context)
+
         elif data == 'settings':
             await query.edit_message_text('Use /dashboard to manage your channels.',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
         elif data == 'sa_analytics':
             from handlers.admin_panel import sa_full_analytics
             await sa_full_analytics(update, context)
+
         elif data == 'sa_manage_owners':
             from handlers.admin_panel import sa_manage_owners
             await sa_manage_owners(update, context)
+
         elif data == 'sa_manage_channels':
             from handlers.admin_panel import sa_manage_channels
             await sa_manage_channels(update, context)
+
         elif data == 'sa_manage_clones':
             from handlers.admin_panel import sa_manage_clones
             await sa_manage_clones(update, context)
-        elif data == 'sa_system_health':
-            from handlers.admin_panel import sa_system_health
-            await sa_system_health(update, context)
+
         elif data == 'sa_platform_broadcast':
             from handlers.admin_panel import sa_platform_broadcast
             await sa_platform_broadcast(update, context)
+
         elif data == 'sa_manage_subs':
             from handlers.admin_panel import sa_manage_subscriptions
             await sa_manage_subscriptions(update, context)
-        elif data == 'referral_info':
-            from handlers.user_commands import referral_handler
-            await referral_handler(update, context)
-        elif data.startswith('approve_one:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            target_user_id = int(parts[2])
-            try:
-                await context.bot.approve_chat_join_request(chat_id, target_user_id)
-                await db.update_join_request_status(target_user_id, chat_id, 'approved', 'manual')
-                pending_count = await db.get_pending_count(chat_id)
-                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
-                channel = await db.get_channel(chat_id)
-                # Send welcome DM if enabled
-                if channel and channel.get('welcome_dm_enabled'):
-                    try:
-                        welcome_text = channel.get('welcome_message', 'Welcome!')
-                        welcome_text = welcome_text.replace('{channel_name}', channel.get('chat_title', ''))
-                        await context.bot.send_message(target_user_id, welcome_text)
-                    except Exception:
-                        pass
-                await query.edit_message_text(
-                    f'\u2705 Approved user {target_user_id} for {channel["chat_title"] if channel else chat_id}',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
-                )
-            except Exception as e:
-                await query.edit_message_text(f'\u274c Failed to approve: {str(e)[:100]}',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
-        elif data.startswith('decline_one:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            target_user_id = int(parts[2])
-            try:
-                await context.bot.decline_chat_join_request(chat_id, target_user_id)
-                await db.update_join_request_status(target_user_id, chat_id, 'declined', 'manual')
-                pending_count = await db.get_pending_count(chat_id)
-                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
-                channel = await db.get_channel(chat_id)
-                await query.edit_message_text(
-                    f'\u274c Declined user {target_user_id} for {channel["chat_title"] if channel else chat_id}',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
-                )
-            except Exception as e:
-                await query.edit_message_text(f'\u274c Failed to decline: {str(e)[:100]}',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
+
+        elif data == 'sa_system_health':
+            from handlers.admin_panel import sa_system_health
+            await sa_system_health(update, context)
+
         elif data == 'edit_support_username':
-            context.user_data['awaiting_support_username'] = True
+            from handlers.admin_panel import sa_edit_support_username
+            await sa_edit_support_username(update, context)
+
+        elif data == 'superadmin_panel':
+            from handlers.admin_panel import superadmin_handler
+            await superadmin_handler(update, context)
+
+        elif data == 'my_channels':
+            from handlers.admin_panel import show_my_channels
+            await show_my_channels(update, context)
+
+        elif data == 'sa_edit_upi':
+            context.user_data['awaiting_upi_input'] = True
+            upi_id = getattr(config, 'UPI_ID', 'payment@upi')
             await query.edit_message_text(
-                '\U0001f4ac Enter the support username (without @):\n\nType /cancel to cancel.',
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='dashboard')]])
+                f'\U0001f4b3 EDIT UPI ID\n\n'
+                f'Current UPI: {upi_id}\n\n'
+                'Send the new UPI ID:',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Cancel', callback_data='superadmin_panel')]])
             )
+
         else:
-            logger.info(f'Unhandled callback: {data}')
+            logger.warning(f'Unknown callback data: {data}')
+            await query.edit_message_text('Unknown action.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
+
     except Exception as e:
         logger.exception(f'Error in callback_router: {e}')
         try:
-            await query.edit_message_text('An error occurred. Please try again.',
+            await query.edit_message_text(
+                'An error occurred. Please try again.',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back to Dashboard', callback_data='dashboard')]]))
         except Exception:
             pass
