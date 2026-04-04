@@ -122,11 +122,11 @@ class SchedulerService:
                 try:
                     # Use raw API call to get pending join requests
                     # python-telegram-bot doesn't have a built-in method for this
-                    import httpx
+                    import aiohttp
                     url = f'https://api.telegram.org/bot{bot.token}/getChatJoinRequests'
-                    async with httpx.AsyncClient() as client:
-                        response = await client.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=30)
-                        data = response.json()
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(url, json={'chat_id': chat_id, 'limit': 100}, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                            data = await response.json()
 
                     if not data.get('ok') or not data.get('result'):
                         continue
