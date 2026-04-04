@@ -5,7 +5,6 @@ from database.models import DatabaseModels
 
 logger = logging.getLogger(__name__)
 
-
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -90,8 +89,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await decline_all_pending(update, context, chat_id)
         elif data.startswith('edit_welcome:'):
             chat_id = int(data.split(':')[1])
-            from handlers.welcome_dm import start_welcome_edit
-            await start_welcome_edit(update, context, chat_id)
+            context.user_data['editing_welcome_for'] = chat_id
         elif data.startswith('preview_welcome:'):
             chat_id = int(data.split(':')[1])
             from handlers.welcome_dm import preview_welcome
@@ -211,6 +209,54 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'referral_info':
             from handlers.user_commands import referral_handler
             await referral_handler(update, context)
+        elif data.startswith('approve_one:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            target_user_id = int(parts[2])
+            try:
+                await context.bot.approve_chat_join_request(chat_id, target_user_id)
+                await db.update_join_request_status(target_user_id, chat_id, 'approved', 'manual')
+                pending_count = await db.get_pending_count(chat_id)
+                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
+                channel = await db.get_channel(chat_id)
+                # Send welcome DM if enabled
+                if channel and channel.get('welcome_dm_enabled'):
+                    try:
+                        welcome_text = channel.get('welcome_message', 'Welcome!')
+                        welcome_text = welcome_text.replace('{channel_name}', channel.get('chat_title', ''))
+                        await context.bot.send_message(target_user_id, welcome_text)
+                    except Exception:
+                        pass
+                await query.edit_message_text(
+                    f'\u2705 Approved user {target_user_id} for {channel["chat_title"] if channel else chat_id}',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
+                )
+            except Exception as e:
+                await query.edit_message_text(f'\u274c Failed to approve: {str(e)[:100]}',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
+        elif data.startswith('decline_one:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            target_user_id = int(parts[2])
+            try:
+                await context.bot.decline_chat_join_request(chat_id, target_user_id)
+                await db.update_join_request_status(target_user_id, chat_id, 'declined', 'manual')
+                pending_count = await db.get_pending_count(chat_id)
+                await db.update_channel_setting(chat_id, 'pending_requests', pending_count)
+                channel = await db.get_channel(chat_id)
+                await query.edit_message_text(
+                    f'\u274c Declined user {target_user_id} for {channel["chat_title"] if channel else chat_id}',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
+                )
+            except Exception as e:
+                await query.edit_message_text(f'\u274c Failed to decline: {str(e)[:100]}',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]]))
+        elif data == 'edit_support_username':
+            context.user_data['awaiting_support_username'] = True
+            await query.edit_message_text(
+                '\U0001f4ac Enter the support username (without @):\n\nType /cancel to cancel.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='dashboard')]])
+            )
         else:
             logger.info(f'Unhandled callback: {data}')
     except Exception as e:
