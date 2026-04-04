@@ -282,7 +282,7 @@ class DatabaseModels:
         """, event_type, owner_id, channel_id, user_id, json.dumps(data) if data else None)
 
     async def get_channel_analytics(self, chat_id, days=30):
-        since = (date.today() - timedelta(days=days)).isoformat()
+        since = date.today() - timedelta(days=days)
         return await self.db.fetch("""
             SELECT DATE(created_at) as day, event_type, COUNT(*) as cnt
             FROM analytics_events
