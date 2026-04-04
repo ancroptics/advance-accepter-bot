@@ -1,114 +1,73 @@
 import logging
 import asyncio
-from telegram.ext import Application, ChatJoinRequestHandler, ChatMemberHandler, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application
+from telegram import Bot
+from database.models import get_bot_clones, update_clone_status
+import config
 
 logger = logging.getLogger(__name__)
 
 
 class CloneManager:
-    def __init__(self):
-        self.active_clones = {}  # clone_id -> Application
+    def __init__(self, db, main_app):
+        self.db = db
+        self.main_app = main_app
+        self.active_clones = {}
+        self._running = False
 
-    async def start_clone(self, clone_id, bot_token, owner_id):
-        logger.info(f'Starting clone {clone_id} for owner {owner_id}')
+    async def start(self):
+        self._running = True
+        clones = await get_bot_clones(self.db, active=True)
+        logger.info(f'Starting {len(clones)} bot clones')
+        for clone in clones:
+            try:
+                await self._start_clone(clone)
+            except Exception as e:
+                logger.error(f"Failed to start clone {clone['id']}: {e}")
+                await update_clone_status(self.db, clone['id'], 'error', str(e))
+
+    async def _start_clone(self, clone):
+        token = clone['bot_token']
+        clone_id = clone['id']
         try:
-            from handlers.join_request import join_request_handler
-            from handlers.channel_detection import channel_detection_handler
-            from handlers.start import start_handler
-            from handlers.callbacks import callback_router
-
-            app = Application.builder().token(bot_token).build()
-            app.bot_data['clone_id'] = clone_id
-            app.bot_data['clone_owner_id'] = owner_id
-            app.bot_data['is_clone'] = True
-
-            # Share database with master
-            from bot import master_db
-            app.bot_data['db'] = master_db
-
-            # Register handlers
-            app.add_handler(CommandHandler('start', start_handler))
-            app.add_handler(ChatJoinRequestHandler(join_request_handler))
-            app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
-            app.add_handler(CallbackQueryHandler(callback_router))
-
-            await app.initialize()
-            await app.start()
-
-            # Set webhook
-            import config
-            webhook_url = f'{config.CLONE_WEBHOOK_BASE_URL}/{clone_id}'
-            await app.bot.set_webhook(webhook_url)
-
-            self.active_clones[clone_id] = app
-            logger.info(f'Clone {clone_id} started successfully')
+            bot = Bot(token=token)
+            info = await bot.get_me()
+            logger.info(f'Clone {clone_id} connected as @{info.username}')
+            self.active_clones[clone_id] = {
+                'bot': bot,
+                'username': info.username,
+                'token': token,
+            }
+            await update_clone_status(self.db, clone_id, 'running')
         except Exception as e:
-            logger.exception(f'Failed to start clone {clone_id}: {e}')
+            logger.error(f'Clone {clone_id} start failed: {e}')
+            await update_clone_status(self.db, clone_id, 'error', str(e))
             raise
 
     async def stop_clone(self, clone_id):
-        logger.info(f'Stopping clone {clone_id}')
-        app = self.active_clones.pop(clone_id, None)
-        if app:
-            try:
-                await app.bot.delete_webhook()
-                await app.stop()
-                await app.shutdown()
-            except Exception as e:
-                logger.error(f'Error stopping clone {clone_id}: {e}')
+        if clone_id in self.active_clones:
+            clone = self.active_clones.pop(clone_id)
+            logger.info(f'Stopped clone {clone_id}')
+            await update_clone_status(self.db, clone_id, 'stopped')
 
-    async def restart_clone(self, clone_id, bot_token, owner_id):
-        await self.stop_clone(clone_id)
-        await asyncio.sleep(1)
-        await self.start_clone(clone_id, bot_token, owner_id)
-
-    async def startup_all_clones(self, db):
-        logger.info('Starting all active clones...')
-        clones = await db.get_active_clones()
-        started = 0
-        failed = 0
-        for clone in (clones or []):
-            try:
-                await self.start_clone(
-                    clone['clone_id'],
-                    clone['bot_token'],
-                    clone['owner_id']
-                )
-                started += 1
-            except Exception as e:
-                failed += 1
-                logger.error(f"Failed to start clone {clone['clone_id']}: {e}")
-        logger.info(f'Clones started: {started}, failed: {failed}')
-        return started, failed
-
-    async def health_check_clones(self, db):
-        for clone_id, app in list(self.active_clones.items()):
-            try:
-                await app.bot.get_me()
-                await db.update_clone_health(clone_id)
-            except Exception as e:
-                logger.error(f'Clone {clone_id} health check failed: {e}')
-                await db.increment_clone_errors(clone_id, str(e))
-                clone = await db.get_clone(clone_id)
-                if clone and clone.get('error_count', 0) > 5:
-                    logger.warning(f'Deactivating clone {clone_id} due to errors')
-                    await self.stop_clone(clone_id)
-                    await db.update_clone_status(clone_id, is_active=False)
-
-    async def process_clone_update(self, clone_id, update_data):
-        app = self.active_clones.get(clone_id)
-        if not app:
-            logger.warning(f'No active clone for id {clone_id}')
-            return False
+    async def add_clone(self, owner_id, bot_token, label=''):
+        from database.models import create_bot_clone
+        clone = await create_bot_clone(self.db, owner_id, bot_token, label)
         try:
-            from telegram import Update
-            update = Update.de_json(update_data, app.bot)
-            await app.process_update(update)
-            return True
+            await self._start_clone(clone)
+            return clone
         except Exception as e:
-            logger.error(f'Error processing update for clone {clone_id}: {e}')
-            return False
+            await update_clone_status(self.db, clone['id'], 'error', str(e))
+            raise
 
-    async def shutdown_all(self):
-        for clone_id in list(self.active_clones.keys()):
-            await self.stop_clone(clone_id)
+    async def stop_all(self):
+        self._running = False
+        for cid in list(self.active_clones.keys()):
+            await self.stop_clone(cid)
+        logger.info('All clones stopped')
+
+    def get_active_count(self):
+        return len(self.active_clones)
+
+    def get_clone_info(self, clone_id):
+        return self.active_clones.get(clone_id)
