@@ -12,7 +12,15 @@ async def show_force_sub_menu(update, context, chat_id):
     if not channel:
         return
     enabled = channel.get('force_subscribe_enabled', False)
-    channels = channel.get('force_subscribe_channels') or []
+    channels_raw = channel.get('force_subscribe_channels') or []
+    if isinstance(channels_raw, str):
+        import json as _json
+        try:
+            channels = _json.loads(channels_raw)
+        except (ValueError, TypeError):
+            channels = []
+    else:
+        channels = channels_raw if isinstance(channels_raw, list) else []
     timeout = channel.get('force_subscribe_timeout_hours', 24)
     status = '\U0001f7e2 Enabled' if enabled else '\U0001f534 Disabled'
     text = f'\U0001f512 FORCE SUBSCRIBE\n\nStatus: {status}\n\nRequired Channels:\n'
@@ -37,7 +45,15 @@ async def verify_force_subscribe(update, context, chat_id):
     channel = await db.get_channel(chat_id)
     if not channel:
         return
-    required_channels = channel.get('force_subscribe_channels') or []
+    required_channels_raw = channel.get('force_subscribe_channels') or []
+    if isinstance(required_channels_raw, str):
+        import json as _json
+        try:
+            required_channels = _json.loads(required_channels_raw)
+        except (ValueError, TypeError):
+            required_channels = []
+    else:
+        required_channels = required_channels_raw if isinstance(required_channels_raw, list) else []
     all_joined = True
     not_joined = []
     for req_ch in required_channels:
@@ -108,7 +124,14 @@ async def handle_force_sub_channel_input(update, context):
         
         # Get current force sub channels
         channel = await db.get_channel(chat_id)
-        current_channels = channel.get('force_subscribe_channels') or []
+        current_channels_raw = channel.get('force_subscribe_channels') or []
+        if isinstance(current_channels_raw, str):
+            try:
+                current_channels = json.loads(current_channels_raw)
+            except (ValueError, TypeError):
+                current_channels = []
+        else:
+            current_channels = current_channels_raw if isinstance(current_channels_raw, list) else []
         
         # Check if already added
         for ch in current_channels:
@@ -124,7 +147,6 @@ async def handle_force_sub_channel_input(update, context):
         }
         current_channels.append(new_entry)
         
-        import json
         await db.update_channel_setting(chat_id, 'force_subscribe_channels', json.dumps(current_channels))
         
         # Also enable force subscribe if not already
