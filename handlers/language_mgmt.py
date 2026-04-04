@@ -33,7 +33,8 @@ async def show_language_menu(update, context, chat_id):
     for code, name in LANGUAGES.items():
         if code == 'en':
             continue
-        buttons.append([InlineKeyboardButton(f"{'✏️' if code in i18n else '➕'} {name}", callback_data=f"set_lang_msg:{chat_id}:{code}")])
+        icon = '\u270f\ufe0f' if code in i18n else '\u2795'
+        buttons.append([InlineKeyboardButton(f"{icon} {name}", callback_data=f"set_lang_msg:{chat_id}:{code}")])
     buttons.append([InlineKeyboardButton('🔙 Back', callback_data=f'manage_channel:{chat_id}')])
     if query:
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
