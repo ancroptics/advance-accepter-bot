@@ -99,12 +99,13 @@ class CloneManager:
 
 
 async def clone_start_handler(update: Update, context):
-    """Handle /start for clone bots."""
+    """Handle /start for clone bots - mirrors main bot dashboard."""
     try:
         bot_info = await context.bot.get_me()
         db = context.application.bot_data.get('db')
         owner_id = context.application.bot_data.get('owner_id')
         clone_id = context.application.bot_data.get('clone_id')
+        user_id = update.effective_user.id
 
         # Check for force sub verification deep link: /start verify_CHATID
         if context.args and context.args[0].startswith('verify_'):
@@ -115,13 +116,63 @@ async def clone_start_handler(update: Update, context):
             except (ValueError, IndexError):
                 pass
 
-        text = (
-            f'\U0001f916 Hi! I\'m @{bot_info.username}\n\n'
-            f'I\'m a clone bot for Growth Engine.\n'
-            f'I automatically handle join requests for channels I manage.\n\n'
-            f'\u2705 Bot is active and running!'
-        )
-        await update.message.reply_text(text)
+        # Check for referral deep link
+        if context.args and context.args[0].startswith('ref_'):
+            try:
+                referrer_id = int(context.args[0][4:])
+                if referrer_id != user_id and db:
+                    await db.set_referrer(user_id, referrer_id)
+                    await db.award_referral_coins(referrer_id, config.DEFAULT_REFERRAL_COINS)
+            except Exception:
+                pass
+
+        if not db:
+            await update.message.reply_text('Bot is initializing, please try again in a moment.')
+            return
+
+        # Check if user is the clone owner - show management dashboard
+        if user_id == owner_id:
+            channels = await db.get_owner_channels(owner_id)
+            owner_data = await db.get_owner(owner_id)
+            tier = owner_data.get('tier', 'free').upper() if owner_data else 'FREE'
+            text = (f'\U0001f4ca CLONE BOT DASHBOARD\n\n'
+                    f'\U0001f44b Hey {update.effective_user.first_name}!\n'
+                    f'\U0001f916 Bot: @{bot_info.username}\n'
+                    f'\U0001f3f7\ufe0f Plan: {tier}\n\n'
+                    f'\u2501\u2501\u2501 YOUR CHANNELS \u2501\u2501\u2501\n\n')
+            buttons = []
+            if channels:
+                for ch in channels:
+                    auto = '\u2705 Auto: ON' if ch.get('auto_approve') else '\u23f8\ufe0f Auto: OFF'
+                    text += (f"\U0001f4e2 {ch['chat_title']}\n"
+                             f"   \U0001f465 {ch.get('member_count', 0)} | \U0001f4cb {ch.get('pending_requests', 0)} pending\n"
+                             f"   {auto}\n\n")
+                    buttons.append([InlineKeyboardButton(
+                        f"\u2699\ufe0f {ch['chat_title'][:25]}",
+                        callback_data=f"clone_manage_ch:{ch['chat_id']}"
+                    )])
+            else:
+                text += 'No channels yet. Add this clone bot as admin to your channel!\n\n'
+            buttons.append([InlineKeyboardButton('\U0001f4e2 Broadcast', callback_data='clone_broadcast')])
+            buttons.append([InlineKeyboardButton('\U0001f4ca Analytics', callback_data='clone_analytics')])
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            # Regular user - show welcome and channel info
+            channels = await db.get_owner_channels(owner_id)
+            channel_names = ', '.join([ch.get('chat_title', '?') for ch in (channels or [])]) or 'various channels'
+            text = (f'\U0001f44b Welcome!\n\n'
+                    f'I\'m @{bot_info.username}, and I manage:\n'
+                    f'\U0001f4e2 {channel_names}\n\n'
+                    f'I handle join requests, welcome messages, and more!\n\n'
+                    f'\u2705 Bot is active and running!')
+            buttons = []
+            for ch in (channels or []):
+                if ch.get('chat_username'):
+                    buttons.append([InlineKeyboardButton(
+                        f"\U0001f4e2 Join {ch['chat_title'][:25]}",
+                        url=f"https://t.me/{ch['chat_username']}"
+                    )])
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
     except Exception as e:
         logger.error(f'Error in clone start handler: {e}')
 
@@ -189,26 +240,249 @@ async def _handle_clone_force_sub_verify(update, context, chat_id):
 
 
 async def clone_callback_handler(update: Update, context):
-    """Handle callback queries for clone bots."""
+    """Handle callback queries for clone bots - mirrors main bot functionality."""
     query = update.callback_query
     await query.answer()
     data = query.data
+    db = context.application.bot_data.get('db')
+    owner_id = context.application.bot_data.get('owner_id')
+    user_id = query.from_user.id
 
-    if data.startswith('verify_force_sub:'):
-        chat_id = int(data.split(':')[1])
-        # For clone bots, redirect to deep link since clone handles its own callbacks
-        bot_info = await context.bot.get_me()
-        await query.edit_message_text(
-            'Please click the button below to verify:',
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton('\u2705 Verify', url=f'https://t.me/{bot_info.username}?start=verify_{chat_id}')
-            ]])
-        )
+    try:
+        if data.startswith('verify_force_sub:'):
+            chat_id = int(data.split(':')[1])
+            bot_info = await context.bot.get_me()
+            await query.edit_message_text(
+                'Please click the button below to verify:',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton('\u2705 Verify', url=f'https://t.me/{bot_info.username}?start=verify_{chat_id}')
+                ]])
+            )
+
+        elif data.startswith('clone_manage_ch:'):
+            if user_id != owner_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel:
+                await query.edit_message_text('Channel not found.')
+                return
+            title = channel.get('chat_title', 'Unknown')
+            mode = channel.get('approve_mode', 'instant')
+            auto = channel.get('auto_approve', True)
+            welcome_dm = channel.get('welcome_dm_enabled', True)
+            force_sub = channel.get('force_subscribe_enabled', False)
+            pending = channel.get('pending_requests', 0)
+            text = (f'\u2699\ufe0f {title}\n\n'
+                    f'Mode: {mode}\n'
+                    f'Auto-approve: {"ON" if auto else "OFF"}\n'
+                    f'Welcome DM: {"ON" if welcome_dm else "OFF"}\n'
+                    f'Force Subscribe: {"ON" if force_sub else "OFF"}\n'
+                    f'Pending: {pending}\n')
+            buttons = []
+            mode_btns = []
+            for m_val, m_label in [('instant', 'Instant'), ('manual', 'Manual'), ('drip', 'Drip')]:
+                label = m_label + (' \u2705' if mode == m_val else '')
+                mode_btns.append(InlineKeyboardButton(label, callback_data=f'clone_set_mode:{chat_id}:{m_val}'))
+            buttons.append(mode_btns)
+            auto_icon = '\u2705' if auto else '\u274c'
+            dm_icon = '\u2705' if welcome_dm else '\u274c'
+            buttons.append([
+                InlineKeyboardButton(f'{auto_icon} Auto-Approve', callback_data=f'clone_toggle_auto:{chat_id}'),
+                InlineKeyboardButton(f'{dm_icon} Welcome DM', callback_data=f'clone_toggle_dm:{chat_id}'),
+            ])
+            fsub_icon = '\u2705' if force_sub else '\u274c'
+            buttons.append([
+                InlineKeyboardButton(f'{fsub_icon} Force Sub', callback_data=f'clone_toggle_fsub:{chat_id}'),
+                InlineKeyboardButton('\U0001f4dd Edit Welcome', callback_data=f'clone_edit_welcome:{chat_id}'),
+            ])
+            if pending > 0:
+                buttons.append([InlineKeyboardButton(f'\u2705 Approve All ({pending})', callback_data=f'clone_batch_approve:{chat_id}')])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='clone_dashboard')])
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data == 'clone_dashboard':
+            if user_id != owner_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            bot_info = await context.bot.get_me()
+            channels = await db.get_owner_channels(owner_id)
+            text = f'\U0001f4ca CLONE BOT DASHBOARD\n\n\U0001f916 @{bot_info.username}\n\n'
+            buttons = []
+            for ch in (channels or []):
+                buttons.append([InlineKeyboardButton(
+                    f"\u2699\ufe0f {ch['chat_title'][:25]}",
+                    callback_data=f"clone_manage_ch:{ch['chat_id']}"
+                )])
+            if not channels:
+                text += 'No channels yet.\n'
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('clone_set_mode:'):
+            if user_id != owner_id:
+                return
+            parts = data.split(':')
+            chat_id, mode = int(parts[1]), parts[2]
+            await db.update_channel_setting(chat_id, 'approve_mode', mode)
+            await query.answer(f'Mode set to {mode}', show_alert=True)
+            # Refresh channel view
+            query.data = f'clone_manage_ch:{chat_id}'
+            await clone_callback_handler(update, context)
+
+        elif data.startswith('clone_toggle_auto:'):
+            if user_id != owner_id:
+                return
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            new_val = not channel.get('auto_approve', True)
+            await db.update_channel_setting(chat_id, 'auto_approve', new_val)
+            await query.answer(f'Auto-approve {"ON" if new_val else "OFF"}', show_alert=True)
+            query.data = f'clone_manage_ch:{chat_id}'
+            await clone_callback_handler(update, context)
+
+        elif data.startswith('clone_toggle_dm:'):
+            if user_id != owner_id:
+                return
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            new_val = not channel.get('welcome_dm_enabled', True)
+            await db.update_channel_setting(chat_id, 'welcome_dm_enabled', new_val)
+            await query.answer(f'Welcome DM {"ON" if new_val else "OFF"}', show_alert=True)
+            query.data = f'clone_manage_ch:{chat_id}'
+            await clone_callback_handler(update, context)
+
+        elif data.startswith('clone_toggle_fsub:'):
+            if user_id != owner_id:
+                return
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            new_val = not channel.get('force_subscribe_enabled', False)
+            await db.update_channel_setting(chat_id, 'force_subscribe_enabled', new_val)
+            await query.answer(f'Force Sub {"ON" if new_val else "OFF"}', show_alert=True)
+            query.data = f'clone_manage_ch:{chat_id}'
+            await clone_callback_handler(update, context)
+
+        elif data.startswith('clone_edit_welcome:'):
+            if user_id != owner_id:
+                return
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            current_msg = channel.get('welcome_message', 'Welcome to {channel_name}! \U0001f389') if channel else 'Not set'
+            context.user_data['clone_editing_welcome_for'] = chat_id
+            await query.edit_message_text(
+                f'\U0001f4dd EDIT WELCOME MESSAGE\n\n'
+                f'\u2501\u2501\u2501 Current Message \u2501\u2501\u2501\n\n'
+                f'{current_msg}\n\n'
+                f'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n'
+                f'Send me the new welcome message.\n\n'
+                f'Variables: {{first_name}}, {{last_name}}, {{username}}, {{channel_name}}, {{user_id}}',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('Cancel', callback_data=f'clone_manage_ch:{chat_id}')]
+                ])
+            )
+
+        elif data.startswith('clone_batch_approve:'):
+            if user_id != owner_id:
+                return
+            chat_id = int(data.split(':')[1])
+            pending = await db.get_pending_requests(chat_id)
+            approved = 0
+            for req in (pending or []):
+                try:
+                    await context.bot.approve_chat_join_request(chat_id, req['user_id'])
+                    await db.update_join_request_after_approve(
+                        user_id=req['user_id'], chat_id=chat_id, dm_sent=False, processed_by='clone_batch')
+                    approved += 1
+                except Exception:
+                    pass
+            await query.answer(f'Approved {approved} requests!', show_alert=True)
+            query.data = f'clone_manage_ch:{chat_id}'
+            await clone_callback_handler(update, context)
+
+        elif data == 'clone_broadcast':
+            if user_id != owner_id:
+                return
+            channels = await db.get_owner_channels(owner_id)
+            buttons = []
+            for ch in (channels or []):
+                buttons.append([InlineKeyboardButton(
+                    ch['chat_title'][:30],
+                    callback_data=f"clone_broadcast_to:{ch['chat_id']}"
+                )])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='clone_dashboard')])
+            await query.edit_message_text('Select channel to broadcast to:', reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('clone_broadcast_to:'):
+            if user_id != owner_id:
+                return
+            chat_id = int(data.split(':')[1])
+            context.user_data['clone_broadcast_channel'] = chat_id
+            await query.edit_message_text(
+                'Send me the broadcast message:',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='clone_dashboard')]])
+            )
+
+        elif data == 'clone_analytics':
+            if user_id != owner_id:
+                return
+            channels = await db.get_owner_channels(owner_id)
+            text = '\U0001f4ca ANALYTICS\n\n'
+            for ch in (channels or []):
+                text += (f"\U0001f4e2 {ch['chat_title']}\n"
+                         f"   Members: {ch.get('member_count', 0)} | Pending: {ch.get('pending_requests', 0)}\n\n")
+            buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='clone_dashboard')]]
+            await query.edit_message_text(text or 'No data.', reply_markup=InlineKeyboardMarkup(buttons))
+
+    except Exception as e:
+        logger.error(f'Error in clone callback handler: {e}')
+        try:
+            await query.edit_message_text(f'An error occurred: {str(e)[:200]}')
+        except Exception:
+            pass
 
 
 async def clone_fallback_handler(update: Update, context):
-    """Handle any other messages for clone bots."""
-    pass  # Silently ignore
+    """Handle text inputs for clone bots (welcome edits, broadcasts)."""
+    if not update.message or not update.message.text:
+        return
+
+    db = context.application.bot_data.get('db')
+    owner_id = context.application.bot_data.get('owner_id')
+    user_id = update.effective_user.id
+
+    if user_id != owner_id or not db:
+        return
+
+    # Handle welcome message editing
+    if context.user_data.get('clone_editing_welcome_for'):
+        chat_id = context.user_data.pop('clone_editing_welcome_for')
+        new_msg = update.message.text
+        await db.update_channel_setting(chat_id, 'welcome_message', new_msg)
+        await update.message.reply_text(
+            f'\u2705 Welcome message updated!\n\nPreview:\n{new_msg}',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'clone_manage_ch:{chat_id}')]])
+        )
+        return
+
+    # Handle broadcast
+    if context.user_data.get('clone_broadcast_channel'):
+        chat_id = context.user_data.pop('clone_broadcast_channel')
+        message = update.message.text
+        users = await db.get_channel_users(chat_id)
+        sent = 0
+        failed = 0
+        for u in (users or []):
+            try:
+                await context.bot.send_message(u['user_id'], message)
+                sent += 1
+            except Exception:
+                failed += 1
+        await update.message.reply_text(
+            f'\U0001f4e2 Broadcast complete!\n\nSent: {sent}\nFailed: {failed}',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='clone_dashboard')]])
+        )
+        return
 
 
 async def clone_join_request_handler(update: Update, context):
