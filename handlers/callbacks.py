@@ -110,6 +110,20 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = int(data.split(':')[1])
             from handlers.force_subscribe import verify_force_subscribe
             await verify_force_subscribe(update, context, chat_id)
+        elif data.startswith('add_force_sub:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.force_subscribe import add_force_sub
+            await add_force_sub(update, context, chat_id)
+        elif data.startswith('remove_force_sub:'):
+            chat_id = int(data.split(':')[1])
+            from handlers.force_subscribe import remove_force_sub
+            await remove_force_sub(update, context, chat_id)
+        elif data.startswith('rm_force_sub:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            remove_ch_id = int(parts[2])
+            from handlers.force_subscribe import confirm_remove_force_sub
+            await confirm_remove_force_sub(update, context, chat_id, remove_ch_id)
         elif data.startswith('cross_promo_setup:'):
             chat_id = int(data.split(':')[1])
             from handlers.cross_promo import show_cross_promo_menu
