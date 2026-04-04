@@ -83,6 +83,30 @@ def _extract_chat_id_from_callback(update):
     return None
 
 
+
+
+async def preview_welcome(update, context, chat_id):
+    """Preview the welcome message for a channel."""
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await query.edit_message_text('Channel not found.')
+        return
+    welcome_msg = channel.get('welcome_message', '')
+    if not welcome_msg:
+        welcome_msg = 'Welcome {name}! Thanks for joining {channel}!'
+    # Format with sample data
+    preview = welcome_msg.replace('{name}', query.from_user.first_name or 'User')
+    preview = preview.replace('{username}', query.from_user.username or 'username')
+    preview = preview.replace('{channel}', channel.get('chat_title', 'Channel'))
+    text = f"\U0001f440 WELCOME MESSAGE PREVIEW\n\n{preview}\n\n(This is how the welcome DM will look)"
+    buttons = [
+        [InlineKeyboardButton('\u270f\ufe0f Edit Message', callback_data=f'edit_welcome:{chat_id}')],
+        [InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')],
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
 welcome_dm_conv_handler = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(
