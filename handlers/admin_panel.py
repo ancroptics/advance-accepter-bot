@@ -88,6 +88,7 @@ async def superadmin_handler(update, context):
         [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
         [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
         [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
+        [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -155,8 +156,20 @@ async def sa_edit_support_username(update, context):
 
 async def sa_manage_subscriptions(update, context):
     query = update.callback_query
-    await query.edit_message_text('Use:\n/activate_premium <user_id> <days>\n/deactivate_premium <user_id>',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
+    db = context.application.bot_data.get('db')
+    owners = await db.get_all_owners(limit=50)
+    text = '\U0001f48e MANAGE PREMIUM\n\nTap on a user to activate/deactivate premium:\n\n'
+    buttons = []
+    for o in (owners or []):
+        tier = o.get('tier', 'free')
+        tier_icon = '\U0001f48e' if tier == 'premium' else '\U0001f4bc' if tier == 'business' else '\u26aa'
+        name = o.get('first_name', '') or o.get('username', '') or str(o['user_id'])
+        label = f'{tier_icon} {name} [{tier.upper()}]'
+        buttons.append([InlineKeyboardButton(label, callback_data=f"sa_activate_user:{o['user_id']}")])
+    if not owners:
+        text += 'No owners found.\n'
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def show_my_channels(update, context):
     """Show all channels connected to this owner."""
