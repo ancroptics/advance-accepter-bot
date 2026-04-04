@@ -24,7 +24,7 @@ async def show_cross_promo_menu(update, context, chat_id):
             f"When another channel in your category sends welcome DMs, "
             f"your channel gets mentioned. And vice versa!")
     buttons = [
-        [InlineKeyboardButton(f"{'🔴 Disable' if enabled else '🟢 Enable'}", callback_data=f'toggle_cross_promo:{chat_id}')],
+        [InlineKeyboardButton(('🔴 Disable' if enabled else '🟢 Enable'), callback_data=f'toggle_cross_promo:{chat_id}')],
     ]
     cat_buttons = []
     for cat in CATEGORIES:
