@@ -14,14 +14,13 @@ async def show_force_sub_menu(update, context, chat_id):
     enabled = channel.get('force_subscribe_enabled', False)
     channels_raw = channel.get('force_subscribe_channels') or []
     if isinstance(channels_raw, str):
-        import json as _json
         try:
-            channels = _json.loads(channels_raw)
+            channels = json.loads(channels_raw)
         except (ValueError, TypeError):
             channels = []
     else:
         channels = channels_raw if isinstance(channels_raw, list) else []
-    timeout = channel.get('force_subscribe_timeout_hours', 24)
+    timeout = 24
     status = '\U0001f7e2 Enabled' if enabled else '\U0001f534 Disabled'
     text = f'\U0001f512 FORCE SUBSCRIBE\n\nStatus: {status}\n\nRequired Channels:\n'
     if channels:
@@ -47,9 +46,8 @@ async def verify_force_subscribe(update, context, chat_id):
         return
     required_channels_raw = channel.get('force_subscribe_channels') or []
     if isinstance(required_channels_raw, str):
-        import json as _json
         try:
-            required_channels = _json.loads(required_channels_raw)
+            required_channels = json.loads(required_channels_raw)
         except (ValueError, TypeError):
             required_channels = []
     else:
@@ -86,7 +84,7 @@ async def verify_force_subscribe(update, context, chat_id):
 
 force_subscribe_conv_handler = None
 
-FORCE_SUB_INPUT = 100  # conversation state
+FORCE_SUB_INPUT = 100
 
 async def handle_force_sub_channel_input(update, context):
     """Handle channel username/ID input for force subscribe setup."""
@@ -99,7 +97,6 @@ async def handle_force_sub_channel_input(update, context):
         return ConversationHandler.END
     
     try:
-        # Try to resolve the channel
         if text.startswith('@'):
             channel_username = text
         elif text.startswith('-100'):
@@ -109,7 +106,6 @@ async def handle_force_sub_channel_input(update, context):
         else:
             channel_username = '@' + text
         
-        # Verify bot can access the channel
         try:
             chat_info = await context.bot.get_chat(channel_username)
         except Exception:
@@ -122,7 +118,6 @@ async def handle_force_sub_channel_input(update, context):
             )
             return FORCE_SUB_INPUT
         
-        # Get current force sub channels
         channel = await db.get_channel(chat_id)
         current_channels_raw = channel.get('force_subscribe_channels') or []
         if isinstance(current_channels_raw, str):
@@ -133,23 +128,21 @@ async def handle_force_sub_channel_input(update, context):
         else:
             current_channels = current_channels_raw if isinstance(current_channels_raw, list) else []
         
-        # Check if already added
         for ch in current_channels:
             if ch.get('chat_id') == chat_info.id:
                 await update.message.reply_text(f'\u26a0\ufe0f {chat_info.title} is already in the force subscribe list!')
                 return ConversationHandler.END
         
-        # Add the new channel
         new_entry = {
             'chat_id': chat_info.id,
             'title': chat_info.title,
             'username': chat_info.username or '',
+            'url': f'https://t.me/{chat_info.username}' if chat_info.username else '',
         }
         current_channels.append(new_entry)
         
         await db.update_channel_setting(chat_id, 'force_subscribe_channels', json.dumps(current_channels))
         
-        # Also enable force subscribe if not already
         if not channel.get('force_subscribe_enabled'):
             await db.update_channel_setting(chat_id, 'force_subscribe_enabled', True)
         
