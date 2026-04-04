@@ -2,6 +2,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+EM_DASH_LINE = '\u2014' * 20
+
 
 async def get_watermark(db, chat_id):
     """Get watermark text for a channel. Returns empty string if disabled."""
@@ -11,7 +13,7 @@ async def get_watermark(db, chat_id):
             return ''
         name = channel.get('chat_title', '')
         if name:
-            return f"\n\n{'\u2014' * 20}\n\U0001f4e2 {name}"
+            return f"\n\n{EM_DASH_LINE}\n\U0001f4e2 {name}"
         return ''
     except Exception as e:
         logger.warning(f'Watermark error: {e}')
@@ -29,7 +31,7 @@ async def add_watermark(text, channel_name=None, owner_name=None):
     if not watermark_parts:
         return text
     watermark = ' | '.join(watermark_parts)
-    return f"{text}\n\n{'\u2014' * 20}\n{watermark}"
+    return f"{text}\n\n{EM_DASH_LINE}\n{watermark}"
 
 
 async def add_media_caption_watermark(caption, channel_name=None):
