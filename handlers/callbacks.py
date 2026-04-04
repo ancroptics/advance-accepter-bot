@@ -249,9 +249,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text('Unknown action.',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
 
-        except BadRequest as e:
-            if 'Message is not modified' not in str(e):
-                raise
+    except BadRequest as e:
+        if 'Message is not modified' not in str(e):
+            logger.exception(f'BadRequest in callback_router: {e}')
     except Exception as e:
         logger.exception(f'Error in callback_router: {e}')
         try:
