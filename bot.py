@@ -47,7 +47,7 @@ class Bot:
             self.app.bot_data['db'] = self.db
             self.app.bot_data['db_pool'] = self.db_pool
 
-            self.scheduler = SchedulerService(self.db, self.app.bot)
+            self.scheduler = SchedulerService(self.app)
             self.app.bot_data['scheduler'] = self.scheduler
 
             self.clone_manager = CloneManager(self.db)
