@@ -1,5 +1,6 @@
 import logging
 import json
+from config import Config as config
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from handlers.admin_panel import show_dashboard
@@ -25,7 +26,14 @@ async def show_force_sub_settings(query, db, chat_id):
     else:
         force_channels = []
 
-    text = f'\U0001f512 Force Subscribe Settings\n\nRequired channels ({len(force_channels)}):\n\n'
+    fsub_mode = channel.get('force_sub_mode', 'auto')
+    fsub_timeout = channel.get('force_sub_timeout', 0)
+
+    mode_labels = {'auto': 'Auto', 'manual': 'Manual', 'drip': 'Drip', 'all': 'All Modes'}
+    timeout_label = f'{fsub_timeout}h' if fsub_timeout > 0 else 'Never'
+
+    text = (f'\U0001f512 Force Subscribe Settings\n\n'
+            f'Required channels ({len(force_channels)}):\n\n')
     buttons = []
     for ch in force_channels:
         title = ch.get('title', 'Unknown')
@@ -38,7 +46,32 @@ async def show_force_sub_settings(query, db, chat_id):
     if not force_channels:
         text += 'No required channels set.\n'
 
-    text += '\nUsers must join all listed channels before being approved.'
+    text += (f'\n\u2501\u2501\u2501 Force Sub Mode \u2501\u2501\u2501\n'
+             f'Current: {mode_labels.get(fsub_mode, fsub_mode)}\n\n'
+             f'\u2022 Auto \u2014 Approve immediately after user joins all channels\n'
+             f'\u2022 Manual \u2014 Send join links, admin approves manually\n'
+             f'\u2022 Drip \u2014 After joining, queue for drip approval\n'
+             f'\u2022 All \u2014 Apply force sub check to all approve modes\n')
+
+    text += (f'\n\u23f0 Auto-Accept Timeout: {timeout_label}\n'
+             f'(Accept even without joining after this time)\n')
+
+    # Mode selection buttons
+    mode_btns = []
+    for m_val, m_label in [('auto', 'Auto'), ('manual', 'Manual'), ('drip', 'Drip'), ('all', 'All')]:
+        icon = '\u2705 ' if fsub_mode == m_val else ''
+        mode_btns.append(InlineKeyboardButton(
+            f'{icon}{m_label}',
+            callback_data=f'fsub_mode:{chat_id}:{m_val}'
+        ))
+    buttons.append(mode_btns)
+
+    # Timeout buttons
+    buttons.append([InlineKeyboardButton(
+        f'\u23f0 Timeout: {timeout_label}',
+        callback_data=f'fsub_timeout_menu:{chat_id}'
+    )])
+
     buttons.append([InlineKeyboardButton('\u2795 Add Channel', callback_data=f'add_force_sub_ch:{chat_id}')])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')])
 
@@ -113,7 +146,7 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
             InlineKeyboardButton('\u274c Decline All', callback_data=f'decline_all:{chat_id}'),
         ])
         if mode == 'drip':
-            buttons.append([InlineKeyboardButton('\U0001f4a7 Start Drip', callback_data=f'start_drip:{chat_id}')])
+            buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
     buttons.append([
         InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
@@ -143,20 +176,30 @@ async def show_pending_requests(query, context, db, chat_id, user_id):
         logger.warning(f'Could not get Telegram pending count for {chat_id}: {e}')
 
     pending = await db.get_pending_requests(chat_id, limit=20)
-    pending_count = await db.get_pending_count(chat_id)
+    db_pending_count = await db.get_pending_count(chat_id)
 
-    # If Telegram shows more pending than our DB, note the discrepancy
-    if telegram_pending > pending_count:
-        pending_count = telegram_pending
     title = channel.get('chat_title', 'Unknown')
+    pending_count = max(telegram_pending, db_pending_count)
+    untracked = max(0, telegram_pending - db_pending_count)
 
-    if not pending:
+    if telegram_pending == 0 and db_pending_count == 0:
         text = f'\U0001f4cb Pending Requests for {title}\n\nNo pending requests at the moment.'
-        buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')]]
+        buttons = [
+            [InlineKeyboardButton('\U0001f504 Refresh', callback_data=f'pending_requests:{chat_id}')],
+            [InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')]
+        ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    text = f'\U0001f4cb Pending Requests for {title}\n\nTotal: {pending_count}\n\n'
+    text = f'\U0001f4cb Pending Requests for {title}\n\n'
+    text += f'\U0001f4ca Telegram reports: {telegram_pending} pending\n'
+    text += f'\U0001f4be Tracked in bot: {db_pending_count}\n'
+    if untracked > 0:
+        text += f'\u26a0\ufe0f Untracked (old): {untracked}\n'
+        text += f'\n\U0001f4a1 {untracked} old request(s) were made before the bot was added.\n'
+        text += 'To approve old requests: Telegram app \u2192 Channel \u2192 Join Requests\n'
+        text += '\u2705 All new requests are tracked automatically!\n'
+    text += f'\nTotal: {pending_count}\n\n'
     buttons = []
     for req in pending:
         name = req.get('first_name', 'Unknown')
@@ -226,24 +269,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         elif data == 'edit_support_overview':
-            channels = await db.get_owner_channels(user_id)
-            if not channels:
-                await query.edit_message_text(
-                    '\U0001f4ac Support Username\n\nNo channels found. Add the bot to a channel first.',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]])
-                )
-                return
-            text = '\U0001f4ac SUPPORT USERNAME\n\nSelect a channel to set/edit its support username:\n\n'
-            buttons = []
-            for ch in channels:
-                title = ch.get('chat_title', 'Unknown')
-                support = ch.get('support_username', '')
-                label = f'{title}'
-                if support:
-                    label += f' (@{support})'
-                buttons.append([InlineKeyboardButton(label, callback_data=f'edit_support_username:{ch["chat_id"]}')])
-            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
+            owner_username = query.from_user.username or 'Not set'
+            support_username = config.SUPPORT_USERNAME or owner_username
+            text = ('\U0001f4ac SUPPORT\n\n'
+                    'For help and queries, contact the owner:\n\n'
+                    f'\U0001f464 @{support_username}\n\n'
+                    'This username is shown to users who need assistance.')
+            buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
 
         elif data == 'my_channels':
             await show_my_channels(query, db, user_id)
@@ -339,6 +373,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = int(data.split(':')[1])
             await show_force_sub_settings(query, db, chat_id)
 
+        elif data.startswith('fsub_mode:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            new_mode = parts[2]
+            await db.update_channel_setting(chat_id, 'force_sub_mode', new_mode)
+            mode_names = {'auto': 'Auto', 'manual': 'Manual', 'drip': 'Drip', 'all': 'All Modes'}
+            await query.answer(f'Force sub mode: {mode_names.get(new_mode, new_mode)}', show_alert=True)
+            await show_force_sub_settings(query, db, chat_id)
+
+        elif data.startswith('fsub_timeout_menu:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            current_timeout = channel.get('force_sub_timeout', 0) if channel else 0
+            text = ('\u23f0 FORCE SUB TIMEOUT\n\n'
+                    'Accept users automatically after this time,\n'
+                    'even if they have NOT joined the required channels.\n\n'
+                    'Choose timeout duration:')
+            buttons = []
+            for hours, label in [(0, 'Never'), (1, '1 hour'), (6, '6 hours'), (12, '12 hours'), (24, '24 hours'), (48, '48 hours')]:
+                icon = '\u2705 ' if current_timeout == hours else ''
+                buttons.append([InlineKeyboardButton(f'{icon}{label}', callback_data=f'set_fsub_timeout:{chat_id}:{hours}')])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'force_sub_settings:{chat_id}')])
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('set_fsub_timeout:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            hours = int(parts[2])
+            await db.update_channel_setting(chat_id, 'force_sub_timeout', hours)
+            label = f'{hours} hours' if hours > 0 else 'Never'
+            await query.answer(f'Force sub timeout: {label}', show_alert=True)
+            await show_force_sub_settings(query, db, chat_id)
+
         elif data.startswith('remove_force_sub:'):
             parts = data.split(':')
             parent_chat_id = int(parts[1])
@@ -386,11 +453,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if telegram_pending > db_pending:
                     diff = telegram_pending - db_pending
-                    msg += (f'\u26a0\ufe0f {diff} request(s) were made before the bot became admin '
-                            f'and are not in our database.\n\n'
-                            f'\U0001f4a1 These old requests can only be approved from the '
-                            f'Telegram app (Channel Settings \u2192 Recent Actions \u2192 Join Requests).\n\n'
-                            f'All NEW requests will be detected and managed automatically!')
+                    msg += (f'\u26a0\ufe0f {diff} old request(s) not tracked in bot.\n\n'
+                            f'\U0001f4a1 These were made before the bot was added as admin.\n'
+                            f'To approve them: Open Telegram \u2192 Channel \u2192 Recent Actions \u2192 Join Requests.\n\n'
+                            f'\u2705 All new requests are now tracked and managed automatically!')
                 elif telegram_pending == 0 and db_pending == 0:
                     msg += '\U0001f389 No pending requests!'
                 elif telegram_pending == 0 and db_pending > 0:
@@ -428,6 +494,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = int(data.split(':')[1])
             await handle_batch_approve(query, context, db, chat_id)
 
+        elif data.startswith('drip_settings:'):
+            chat_id = int(data.split(':')[1])
+            await show_drip_settings(query, db, chat_id)
+
         elif data.startswith('start_drip:'):
             chat_id = int(data.split(':')[1])
             await handle_start_drip(query, context, db, chat_id)
@@ -458,7 +528,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rate = int(parts[2])
             await db.update_channel_setting(chat_id, 'drip_rate', rate)
             await query.answer(f'Drip rate set to {rate}/batch', show_alert=True)
-            await show_channel_settings(query, db, chat_id, user_id, context)
+            await show_drip_settings(query, db, chat_id)
 
         elif data.startswith('set_drip_interval:'):
             parts = data.split(':')
@@ -466,7 +536,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             interval = int(parts[2])
             await db.update_channel_setting(chat_id, 'drip_interval', interval)
             await query.answer(f'Drip interval set to {interval}s', show_alert=True)
-            await show_channel_settings(query, db, chat_id, user_id, context)
+            await show_drip_settings(query, db, chat_id)
 
         elif data.startswith('my_clones'):
             await show_my_clones(query, db, user_id)
@@ -994,6 +1064,31 @@ async def handle_verify_force_sub(query, context, db, chat_id, user_id):
                 raise
         return
 
+    force_sub_mode = channel.get('force_sub_mode', 'auto')
+
+    if force_sub_mode == 'manual':
+        # Manual mode - mark as verified, admin will approve
+        try:
+            await db.update_join_request_force_sub(user_id, chat_id, False)
+        except Exception as e:
+            logger.error(f'Error updating force sub status: {e}')
+        await query.edit_message_text(
+            '\u2705 Channels verified! Your request is pending admin approval.\n'
+            'You will be notified when approved.')
+        return
+
+    if force_sub_mode == 'drip':
+        # Drip mode - mark verified, will be approved in next drip batch
+        try:
+            await db.update_join_request_force_sub(user_id, chat_id, False)
+        except Exception as e:
+            logger.error(f'Error updating force sub status: {e}')
+        await query.edit_message_text(
+            '\u2705 Channels verified! You are in the approval queue.\n'
+            'You will be approved shortly.')
+        return
+
+    # Auto mode (or 'all') - approve immediately
     try:
         await context.bot.approve_chat_join_request(chat_id, user_id)
     except Exception as e:
@@ -1039,6 +1134,77 @@ async def handle_batch_approve(query, context, db, chat_id):
         await show_channel_settings(query, db, chat_id, query.from_user.id, context)
     except Exception:
         pass  # Message not modified is OK after batch operations
+
+
+async def show_drip_settings(query, db, chat_id):
+    """Show drip settings with quantity and interval options."""
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await query.edit_message_text('Channel not found.')
+        return
+
+    drip_rate = channel.get('drip_rate', 5)
+    drip_interval = channel.get('drip_interval', 60)
+    pending_count = await db.get_pending_count(chat_id)
+
+    # Format interval for display
+    if drip_interval < 60:
+        interval_display = f'{drip_interval}s'
+    elif drip_interval < 3600:
+        interval_display = f'{drip_interval // 60}m'
+    else:
+        interval_display = f'{drip_interval // 3600}h'
+
+    text = (f'\U0001f4a7 DRIP SETTINGS\n\n'
+            f'\U0001f4cb Pending requests: {pending_count}\n'
+            f'\U0001f465 Batch size: {drip_rate} users\n'
+            f'\u23f1 Interval: {interval_display}\n\n'
+            f'\u2501\u2501\u2501 Batch Size \u2501\u2501\u2501\n'
+            f'How many users to approve per batch:\n')
+
+    buttons = []
+    # Quantity row 1
+    qty_row1 = []
+    for q in [1, 5, 10]:
+        icon = '\u2705 ' if drip_rate == q else ''
+        qty_row1.append(InlineKeyboardButton(f'{icon}{q}', callback_data=f'set_drip_rate:{chat_id}:{q}'))
+    buttons.append(qty_row1)
+    # Quantity row 2
+    qty_row2 = []
+    for q in [25, 50, 100]:
+        icon = '\u2705 ' if drip_rate == q else ''
+        qty_row2.append(InlineKeyboardButton(f'{icon}{q}', callback_data=f'set_drip_rate:{chat_id}:{q}'))
+    buttons.append(qty_row2)
+
+    text += f'\n\u2501\u2501\u2501 Interval \u2501\u2501\u2501\n'
+    text += f'Time between each batch:\n'
+
+    # Interval row 1
+    int_row1 = []
+    for secs, label in [(30, '30s'), (60, '1m'), (300, '5m')]:
+        icon = '\u2705 ' if drip_interval == secs else ''
+        int_row1.append(InlineKeyboardButton(f'{icon}{label}', callback_data=f'set_drip_interval:{chat_id}:{secs}'))
+    buttons.append(int_row1)
+    # Interval row 2
+    int_row2 = []
+    for secs, label in [(900, '15m'), (1800, '30m'), (3600, '1h')]:
+        icon = '\u2705 ' if drip_interval == secs else ''
+        int_row2.append(InlineKeyboardButton(f'{icon}{label}', callback_data=f'set_drip_interval:{chat_id}:{secs}'))
+    buttons.append(int_row2)
+
+    if pending_count > 0:
+        buttons.append([InlineKeyboardButton(
+            f'\u25b6\ufe0f Start Drip Now ({pending_count} pending)',
+            callback_data=f'start_drip:{chat_id}'
+        )])
+
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')])
+
+    try:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        if 'message is not modified' not in str(e).lower():
+            raise
 
 
 async def handle_start_drip(query, context, db, chat_id):
