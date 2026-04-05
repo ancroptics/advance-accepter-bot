@@ -107,11 +107,14 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     pending = pending_db if pending_db is not None else channel.get('pending_requests', 0)
     support = channel.get('support_username', '')
 
+    watermark_username = channel.get('watermark_username', '')
+    watermark_enabled = channel.get('watermark_enabled', False)
     text = (f'\u2699\ufe0f Channel Settings: {title}\n\n'
             f'Mode: {mode}\n'
             f'Auto-approve: {"ON" if auto else "OFF"}\n'
             f'Welcome DM: {"ON" if welcome_dm else "OFF"}\n'
             f'Force Subscribe: {"ON" if force_sub else "OFF"}\n'
+            f'Watermark: {"@" + watermark_username if watermark_enabled and watermark_username else "OFF"}\n'
             f'Pending: {pending}\n')
     if support:
         text += f'Support: @{support}\n'
@@ -145,8 +148,13 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
             InlineKeyboardButton(f'\u2705 Approve All ({pending})', callback_data=f'batch_approve:{chat_id}'),
             InlineKeyboardButton('\u274c Decline All', callback_data=f'decline_all:{chat_id}'),
         ])
-        if mode == 'drip':
-            buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
+    if mode == 'drip':
+        buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
+    wm_icon = '\u2705' if channel.get('watermark_enabled') else '\u274c'
+    buttons.append([
+        InlineKeyboardButton(f'{wm_icon} Watermark', callback_data=f'toggle_watermark:{chat_id}'),
+        InlineKeyboardButton('\u270f\ufe0f Set @username', callback_data=f'set_watermark_username:{chat_id}'),
+    ])
     buttons.append([
         InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
@@ -574,6 +582,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await db.update_channel_setting(chat_id, 'drip_interval', interval)
             await query.answer(f'Drip interval set to {interval}s', show_alert=True)
             await show_drip_settings(query, db, chat_id)
+
+        elif data.startswith('toggle_watermark:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            current = channel.get('watermark_enabled', False) if channel else False
+            await db.update_channel_setting(chat_id, 'watermark_enabled', not current)
+            status = 'OFF' if current else 'ON'
+            await query.answer(f'Watermark {status}', show_alert=True)
+            await show_channel_settings(query, db, chat_id, user_id, context)
+
+        elif data.startswith('set_watermark_username:'):
+            chat_id = int(data.split(':')[1])
+            context.user_data['editing_watermark_for'] = chat_id
+            await query.edit_message_text(
+                '\u270f\ufe0f Send the @username for watermark:\n\n'
+                'This will appear at the bottom of all welcome messages and force-sub messages.\n\n'
+                'Example: @mychannel or @mybotname\n\n'
+                'Send /cancel to cancel.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data=f'manage_channel:{chat_id}')]])
+            )
 
         elif data.startswith('my_clones'):
             await show_my_clones(query, db, user_id)
