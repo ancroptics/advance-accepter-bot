@@ -70,6 +70,8 @@ def register_handlers(application):
 
 async def handle_text_input(update, context):
     """Handle text inputs for various conversation states."""
+    if not update.effective_user:
+        return
     user_id = update.effective_user.id
     db = context.application.bot_data.get('db')
 
@@ -127,7 +129,7 @@ async def handle_text_input(update, context):
             except Exception:
                 failed += 1
         await update.message.reply_text(
-            f'\ud83d\udce2 Broadcast complete!\n\nSent: {sent}\nFailed: {failed}',
+            f'\U0001f4e2 Broadcast complete!\n\nSent: {sent}\nFailed: {failed}',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
         )
         return
