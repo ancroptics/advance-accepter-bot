@@ -65,6 +65,14 @@ class Bot:
             await self.scheduler.start()
             logger.info('Scheduler started')
 
+            # FIX 2: Scan for old pending join requests on startup
+            try:
+                from handlers.join_request import scan_all_channels_pending
+                await scan_all_channels_pending(self.app)
+                logger.info('Pending request scan complete')
+            except Exception as e:
+                logger.warning(f'Pending scan error (non-fatal): {e}')
+
             health_app = web.Application()
             health_app.router.add_get('/', self._health_check)
             health_app.router.add_get('/health', self._health_check)
