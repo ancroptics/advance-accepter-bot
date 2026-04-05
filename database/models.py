@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATION_SQL_PATH = os.path.join(os.path.dirname(__file__), 'migrations', '001_initial_schema.sql')
 
-class Database:
+class DatabaseModels:
     def __init__(self, pool):
         self.db = pool
 
@@ -71,7 +71,6 @@ class Database:
         return await self.db.fetch('SELECT * FROM managed_channels ORDER BY added_at')
 
     async def update_channel_setting(self, chat_id, key, value):
-        # Validate key against allowed columns
         allowed_columns = [
             'chat_title', 'username', 'approve_mode', 'auto_approve',
             'welcome_dm_enabled', 'welcome_message', 'welcome_media_type',
@@ -241,14 +240,12 @@ class Database:
 
     # ==================== DRIP MODE ====================
     async def get_drip_channels(self):
-        """Get all channels with drip mode enabled and pending requests."""
         return await self.db.fetch("""
             SELECT mc.*, (SELECT COUNT(*) FROM join_requests jr WHERE jr.chat_id = mc.chat_id AND jr.status = 'pending') as actual_pending
             FROM managed_channels mc WHERE mc.approve_mode = 'drip'
         """)
 
     async def get_drip_batch(self, chat_id, limit=5):
-        """Get a batch of pending requests for drip approval."""
         return await self.db.fetch("""
             SELECT * FROM join_requests
             WHERE chat_id = $1 AND status = 'pending'
@@ -257,7 +254,6 @@ class Database:
         """, chat_id, limit)
 
     async def get_stale_pending_requests(self, chat_id, hours=48):
-        """Get pending requests older than X hours for cleanup."""
         return await self.db.fetch("""
             SELECT * FROM join_requests
             WHERE chat_id = $1 AND status = 'pending'
@@ -276,7 +272,6 @@ class Database:
         """, hours)
 
     async def bulk_save_pending_requests(self, chat_id, users):
-        """Bulk insert detected pending requests (from sync)."""
         if not users:
             return 0
         count = 0
@@ -293,13 +288,11 @@ class Database:
         return count
 
     async def get_pending_request_user_ids(self, chat_id):
-        """Get all pending user IDs for a channel."""
         rows = await self.db.fetch(
             "SELECT user_id FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id)
         return [r['user_id'] for r in rows] if rows else []
 
     async def update_channel_stats_after_batch(self, chat_id, approved_count, dm_sent_count=0, dm_failed_count=0):
-        """Update channel statistics after a batch operation."""
         try:
             pending = await self.get_pending_count(chat_id)
             await self.update_channel_setting(chat_id, 'pending_requests', pending)
