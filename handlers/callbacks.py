@@ -109,9 +109,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = int(data.split(':')[1])
             await db.remove_channel(chat_id)
             await query.edit_message_text(
-                '\u2705 Channel removed successfully!',
+                '✅ Channel removed successfully!',
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton('\U0001f504 Back to Dashboard', callback_data='back_to_dashboard')
+                    InlineKeyboardButton('🔄 Back to Dashboard', callback_data='back_to_dashboard')
                 ]])
             )
 
@@ -127,9 +127,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling callback {data}: {e}", exc_info=True)
         try:
             await query.edit_message_text(
-                f'\u274c An error occurred: {str(e)}',
+                f'❌ An error occurred: {str(e)}',
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton('\U0001f504 Back to Dashboard', callback_data='back_to_dashboard')
+                    InlineKeyboardButton('🔄 Back to Dashboard', callback_data='back_to_dashboard')
                 ]])
             )
         except:
@@ -150,16 +150,15 @@ async def welcome_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await db.update_channel_settings(chat_id, welcome_message=welcome_text)
 
-    # Clear state
     context.user_data.pop('awaiting_welcome', None)
     context.user_data.pop('welcome_chat_id', None)
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton('\U0001f519 Back to Settings', callback_data=f'settings:{chat_id}')]
+        [InlineKeyboardButton('🔙 Back to Settings', callback_data=f'settings:{chat_id}')]
     ])
 
     await update.message.reply_text(
-        f'\u2705 Welcome message updated!\n\nPreview:\n{welcome_text}',
+        f'✅ Welcome message updated!\n\nPreview:\n{welcome_text}',
         reply_markup=keyboard
     )
 
@@ -178,16 +177,15 @@ async def decline_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await db.update_channel_settings(chat_id, decline_text=decline_text)
 
-    # Clear state
     context.user_data.pop('awaiting_decline_text', None)
     context.user_data.pop('decline_chat_id', None)
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton('\U0001f519 Back to Settings', callback_data=f'settings:{chat_id}')]
+        [InlineKeyboardButton('🔙 Back to Settings', callback_data=f'settings:{chat_id}')]
     ])
 
     await update.message.reply_text(
-        f'\u2705 Decline text updated!\n\nPreview:\n{decline_text}',
+        f'✅ Decline text updated!\n\nPreview:\n{decline_text}',
         reply_markup=keyboard
     )
 
@@ -206,7 +204,6 @@ async def schedule_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
     time_input = update.message.text.strip()
 
     try:
-        # Parse time input (HH:MM format)
         parts = time_input.split(':')
         if len(parts) != 2:
             raise ValueError("Invalid time format")
@@ -219,7 +216,6 @@ async def schedule_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
         schedule_time = f"{hour:02d}:{minute:02d}"
 
-        # Update channel settings
         await db.update_channel_settings(
             chat_id,
             schedule_type=schedule_type,
@@ -227,7 +223,6 @@ async def schedule_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
             schedule_enabled=True
         )
 
-        # Clear state
         context.user_data.pop('awaiting_schedule_time', None)
         context.user_data.pop('schedule_chat_id', None)
         context.user_data.pop('schedule_type', None)
@@ -235,24 +230,23 @@ async def schedule_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         type_labels = {
             'daily': 'Daily',
             'hourly': 'Every hour',
-            'twice_daily': 'Twice daily (00:00 & 12:00)',
+            'twice_daily': 'Twice daily',
             'weekly': 'Weekly'
         }
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('\U0001f519 Back to Settings', callback_data=f'settings:{chat_id}')]
+            [InlineKeyboardButton('🔙 Back to Settings', callback_data=f'settings:{chat_id}')]
         ])
 
         await update.message.reply_text(
-            f'\u2705 Schedule updated!\n\n'
+            f'✅ Schedule updated!\n\n'
             f'Type: {type_labels.get(schedule_type, schedule_type)}\n'
             f'Time: {schedule_time} UTC\n'
             f'Status: Enabled',
             reply_markup=keyboard
         )
 
-    except ValueError as e:
+    except ValueError:
         await update.message.reply_text(
-            '\u274c Invalid time format. Please send time in HH:MM format (e.g., 09:00, 14:30).\n'
-            'Hours: 00-23, Minutes: 00-59'
+            '❌ Invalid time format. Please send time in HH:MM format (e.g., 09:00, 14:30).'
         )
