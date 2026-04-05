@@ -139,6 +139,9 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                         "\u2705 I've Joined \u2014 Verify Me",
                         callback_data=f'verify_force_sub:{chat_id}'
                     )])
+                    # Add watermark to force-sub message
+                    watermark = await get_watermark(db, chat_id)
+                    text += watermark
                     await context.bot.send_message(
                         user_id, text,
                         reply_markup=InlineKeyboardMarkup(buttons)
