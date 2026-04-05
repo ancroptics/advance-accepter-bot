@@ -16,36 +16,69 @@ class DatabaseModels:
             with open(MIGRATION_SQL_PATH, 'r') as f:
                 sql = f.read()
             await self.db.execute(sql)
+            # Add columns that may be missing from initial migration
+            extra_ddl = """
+            DO $$ BEGIN
+                ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS support_username TEXT;
+                ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS referral_enabled BOOLEAN DEFAULT FALSE;
+                ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS welcome_messages_json TEXT;
+            EXCEPTION WHEN others THEN NULL;
+            END $$;
+            """
+            await self.db.execute(extra_ddl)
             logger.info('Database migrations completed')
         except Exception as e:
             logger.error(f'Migration error: {e}')
 
     # ==================== OWNER / ADMIN ====================
     async def get_owner(self, user_id):
-        return await self.db.fetchrow('SELECT * FROM owners WHERE user_id = $1', user_id)
+        return await self.db.fetchrow('SELECT * FROM channel_owners WHERE user_id = $1', user_id)
 
     async def create_owner(self, user_id, username=None, first_name=None, plan='free'):
         return await self.db.execute("""
-            INSERT INTO owners (user_id, username, first_name, plan, created_at)
+            INSERT INTO channel_owners (user_id, username, first_name, tier, registered_at)
             VALUES ($1, $2, $3, $4, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
-                username = COALESCE($2, owners.username),
-                first_name = COALESCE($3, owners.first_name)
+                username = COALESCE($2, channel_owners.username),
+                first_name = COALESCE($3, channel_owners.first_name)
         """, user_id, username, first_name, plan)
 
     async def get_owner_plan(self, user_id):
-        row = await self.db.fetchrow('SELECT plan, premium_expires FROM owners WHERE user_id = $1', user_id)
+        row = await self.db.fetchrow('SELECT tier FROM channel_owners WHERE user_id = $1', user_id)
         if not row:
             return 'free', None
-        return row['plan'], row.get('premium_expires')
+        return row['tier'], None
 
     async def set_owner_plan(self, user_id, plan, expires=None):
         return await self.db.execute("""
-            UPDATE owners SET plan = $2, premium_expires = $3 WHERE user_id = $1
-        """, user_id, plan, expires)
+            UPDATE channel_owners SET tier = $2 WHERE user_id = $1
+        """, user_id, plan)
 
     async def get_all_owners(self):
-        return await self.db.fetch('SELECT * FROM owners ORDER BY created_at')
+        return await self.db.fetch('SELECT * FROM channel_owners ORDER BY registered_at')
+
+    async def upsert_owner(self, user_id, username=None, first_name=None, last_name=None):
+        """Create or update a channel owner."""
+        return await self.db.execute("""
+            INSERT INTO channel_owners (user_id, username, first_name, last_name, tier, registered_at, last_active)
+            VALUES ($1, $2, $3, $4, 'free', NOW(), NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+                username = COALESCE($2, channel_owners.username),
+                first_name = COALESCE($3, channel_owners.first_name),
+                last_name = COALESCE($4, channel_owners.last_name),
+                last_active = NOW()
+        """, user_id, username, first_name, last_name)
+
+    async def upsert_channel(self, chat_id, owner_id, chat_title=None, chat_username=None, chat_type='channel'):
+        """Create or update a managed channel."""
+        return await self.db.execute("""
+            INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_username, chat_type, is_active, bot_is_admin, added_at)
+            VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
+            ON CONFLICT (chat_id) DO UPDATE SET
+                owner_id = $2, chat_title = COALESCE($3, managed_channels.chat_title),
+                chat_username = COALESCE($4, managed_channels.chat_username),
+                chat_type = $5, is_active = TRUE, bot_is_admin = TRUE
+        """, chat_id, owner_id, chat_title, chat_username, chat_type)
 
     # ==================== CHANNELS ====================
     async def get_channel(self, chat_id):
@@ -57,11 +90,11 @@ class DatabaseModels:
 
     async def add_channel(self, chat_id, owner_id, chat_title=None, chat_type='channel', username=None):
         return await self.db.execute("""
-            INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_type, username, added_at)
+            INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_type, chat_username, added_at)
             VALUES ($1, $2, $3, $4, $5, NOW())
             ON CONFLICT (chat_id) DO UPDATE SET
                 owner_id = $2, chat_title = COALESCE($3, managed_channels.chat_title),
-                chat_type = $4, username = COALESCE($5, managed_channels.username)
+                chat_type = $4, chat_username = COALESCE($5, managed_channels.chat_username)
         """, chat_id, owner_id, chat_title, chat_type, username)
 
     async def remove_channel(self, chat_id):
@@ -77,7 +110,7 @@ class DatabaseModels:
 
     async def update_channel_setting(self, chat_id, key, value):
         allowed_columns = [
-            'chat_title', 'username', 'approve_mode', 'auto_approve',
+            'chat_title', 'chat_username', 'approve_mode', 'auto_approve',
             'welcome_dm_enabled', 'welcome_message', 'welcome_media_type',
             'welcome_media_file_id', 'welcome_buttons_json',
             'force_subscribe_enabled', 'force_subscribe_channels',
@@ -86,6 +119,8 @@ class DatabaseModels:
             'pending_requests',
             'cross_promo_enabled', 'referral_enabled',
             'welcome_messages_json', 'force_sub_timeout',
+            'force_sub_mode',
+            'is_active', 'bot_is_admin',
         ]
         if key not in allowed_columns:
             raise ValueError(f'Invalid column: {key}')
@@ -134,7 +169,7 @@ class DatabaseModels:
         return await self.db.execute("""
             UPDATE join_requests SET force_sub_required = $3
             WHERE user_id = $1 AND chat_id = $2
-        """, user_id, chat_id, required)
+        """, user_id, chat_id, str(required))
 
     async def update_force_sub_completed(self, user_id, chat_id):
         return await self.db.execute("""
@@ -147,22 +182,34 @@ class DatabaseModels:
                               language_code=None, source=None, source_channel=None):
         return await self.db.execute("""
             INSERT INTO end_users (user_id, username, first_name, last_name, language_code,
-                                   source, source_channel, first_seen)
+                                   source, source_channel, first_seen_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
                 username = COALESCE($2, end_users.username),
                 first_name = COALESCE($3, end_users.first_name),
                 last_name = COALESCE($4, end_users.last_name),
                 language_code = COALESCE($5, end_users.language_code),
-                last_seen = NOW()
+                last_active = NOW()
         """, user_id, username, first_name, last_name, language_code, source, source_channel)
 
     async def get_end_user(self, user_id):
         return await self.db.fetchrow('SELECT * FROM end_users WHERE user_id = $1', user_id)
 
+    async def set_referrer(self, user_id, referrer_id):
+        """Set referrer for a user and increment referrer's count."""
+        await self.db.execute(
+            'UPDATE end_users SET referrer_id = $2 WHERE user_id = $1', user_id, referrer_id)
+        await self.db.execute(
+            'UPDATE end_users SET referral_count = referral_count + 1 WHERE user_id = $1', referrer_id)
+
+    async def award_referral_coins(self, user_id, amount):
+        """Award coins to a user for referral."""
+        return await self.db.execute(
+            'UPDATE end_users SET coins = coins + $2 WHERE user_id = $1', user_id, amount)
+
     async def mark_user_blocked(self, user_id):
         return await self.db.execute("""
-            UPDATE end_users SET blocked_bot = TRUE WHERE user_id = $1
+            UPDATE end_users SET has_blocked_bot = TRUE WHERE user_id = $1
         """, user_id)
 
     async def get_channel_users(self, chat_id):
@@ -173,13 +220,19 @@ class DatabaseModels:
             ORDER BY jr.first_name
         """, chat_id)
 
+    async def get_channel_user_count(self, chat_id):
+        """Get count of approved users for a channel."""
+        val = await self.db.fetchval(
+            "SELECT COUNT(DISTINCT user_id) FROM join_requests WHERE chat_id = $1 AND status = 'approved'", chat_id)
+        return val or 0
+
     async def get_all_bot_users(self):
-        return await self.db.fetch('SELECT user_id FROM end_users WHERE blocked_bot = FALSE')
+        return await self.db.fetch('SELECT user_id FROM end_users WHERE has_blocked_bot = FALSE')
 
     # ==================== ANALYTICS ====================
     async def log_event(self, event_type, owner_id=None, channel_id=None, user_id=None, data=None):
         return await self.db.execute("""
-            INSERT INTO analytics_events (event_type, owner_id, channel_id, user_id, event_data, created_at)
+            INSERT INTO analytics_events (event_type, owner_id, channel_id, user_id, data, created_at)
             VALUES ($1, $2, $3, $4, $5, NOW())
         """, event_type, owner_id, channel_id, user_id, json.dumps(data) if data else None)
 
@@ -227,16 +280,10 @@ class DatabaseModels:
         return result
 
     # ==================== REFERRALS ====================
-    async def create_referral(self, referrer_id, referred_id, channel_id=None):
-        return await self.db.execute("""
-            INSERT INTO referrals (referrer_id, referred_id, channel_id, created_at)
-            VALUES ($1, $2, $3, NOW())
-            ON CONFLICT DO NOTHING
-        """, referrer_id, referred_id, channel_id)
-
     async def get_referral_count(self, user_id):
-        return await self.db.fetchval(
-            'SELECT COUNT(*) FROM referrals WHERE referrer_id = $1', user_id) or 0
+        val = await self.db.fetchval(
+            'SELECT referral_count FROM end_users WHERE user_id = $1', user_id)
+        return val or 0
 
     async def add_coins(self, user_id, amount):
         return await self.db.execute("""
@@ -270,7 +317,7 @@ class DatabaseModels:
         return await self.db.fetch("""
             SELECT * FROM join_requests
             WHERE status = 'pending'
-                AND force_sub_required = TRUE
+                AND force_sub_required IS NOT NULL
                 AND force_sub_completed = FALSE
                 AND request_time < NOW() - INTERVAL '1 hour' * $1
             ORDER BY request_time
@@ -307,25 +354,25 @@ class DatabaseModels:
     # ==================== CLONE BOT ====================
     async def save_clone_bot(self, owner_id, bot_token, bot_username, settings=None):
         return await self.db.execute("""
-            INSERT INTO clone_bots (owner_id, bot_token, bot_username, settings, created_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            INSERT INTO bot_clones (owner_id, bot_token, bot_username, created_at)
+            VALUES ($1, $2, $3, NOW())
             ON CONFLICT (bot_token) DO UPDATE SET
-                bot_username = $3, settings = COALESCE($4, clone_bots.settings)
-        """, owner_id, bot_token, bot_username, json.dumps(settings) if settings else None)
+                bot_username = $3
+        """, owner_id, bot_token, bot_username)
 
     async def get_owner_clones(self, owner_id):
-        return await self.db.fetch('SELECT * FROM clone_bots WHERE owner_id = $1', owner_id)
+        return await self.db.fetch('SELECT * FROM bot_clones WHERE owner_id = $1', owner_id)
 
     async def get_clone_bot(self, bot_token):
-        return await self.db.fetchrow('SELECT * FROM clone_bots WHERE bot_token = $1', bot_token)
+        return await self.db.fetchrow('SELECT * FROM bot_clones WHERE bot_token = $1', bot_token)
 
     async def delete_clone_bot(self, bot_token):
-        return await self.db.execute('DELETE FROM clone_bots WHERE bot_token = $1', bot_token)
+        return await self.db.execute('DELETE FROM bot_clones WHERE bot_token = $1', bot_token)
 
     # ==================== BROADCAST ====================
     async def save_broadcast(self, owner_id, channel_id, message_text, sent=0, failed=0):
         return await self.db.execute("""
-            INSERT INTO broadcasts (owner_id, channel_id, message_text, sent_count, failed_count, created_at)
+            INSERT INTO broadcasts (owner_id, channel_id, content, sent_count, failed_count, created_at)
             VALUES ($1, $2, $3, $4, $5, NOW())
         """, owner_id, channel_id, message_text, sent, failed)
 
