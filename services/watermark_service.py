@@ -6,19 +6,27 @@ EM_DASH_LINE = '\u2014' * 20
 
 async def get_watermark(db, chat_id):
     """Get watermark text for a channel.
-    FIX 5: Uses global watermark message set by superadmin for free plan users.
-    Returns empty string if disabled."""
+    Supports per-channel watermark @username set by channel owner.
+    Also supports global watermark for free-plan users."""
     try:
-        # Check global watermark setting
-        global_enabled = await db.get_platform_setting('global_watermark_enabled', 'true')
-        if global_enabled.lower() != 'true':
-            return ''
-
         channel = await db.get_channel(chat_id)
         if not channel:
             return ''
 
-        # Check if owner is on a paid plan (exempt from watermark)
+        # Check per-channel watermark first
+        if channel.get('watermark_enabled') and channel.get('watermark_username'):
+            username = channel['watermark_username']
+            return f"\n\n{EM_DASH_LINE}\n@{username}"
+
+        # Check global watermark setting (superadmin)
+        try:
+            global_enabled = await db.get_platform_setting('global_watermark_enabled', 'false')
+            if global_enabled.lower() != 'true':
+                return ''
+        except Exception:
+            return ''
+
+        # Check if owner is on a paid plan (exempt from global watermark)
         owner_id = channel.get('owner_id')
         if owner_id:
             owner = await db.get_owner(owner_id)
@@ -26,19 +34,17 @@ async def get_watermark(db, chat_id):
                 return ''
 
         # Get custom watermark message from superadmin, or use default
-        custom_message = await db.get_platform_setting('global_watermark_message', '')
+        try:
+            custom_message = await db.get_platform_setting('global_watermark_message', '')
+        except Exception:
+            custom_message = ''
 
         if custom_message:
-            # Replace variables
             name = channel.get('chat_title', '')
             custom_message = custom_message.replace('{channel_name}', name)
             custom_message = custom_message.replace('{bot_name}', 'Growth Engine')
             return f"\n\n{EM_DASH_LINE}\n{custom_message}"
 
-        # Default watermark: channel name
-        name = channel.get('chat_title', '')
-        if name:
-            return f"\n\n{EM_DASH_LINE}\n\U0001f4e2 {name}"
         return ''
     except Exception as e:
         logger.warning(f'Watermark error: {e}')
