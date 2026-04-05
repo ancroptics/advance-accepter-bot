@@ -65,6 +65,11 @@ async def show_channel_settings(update, context, chat_id, edit=False):
             InlineKeyboardButton('\U0001f4a7 Drip', callback_data=f'approve_mode:{cid}:drip'),
             InlineKeyboardButton('\u270b Manual', callback_data=f'approve_mode:{cid}:manual'),
         ],
+    ]
+    # FIX 1: Show Drip Settings button when mode is drip
+    if approve_mode.lower() == 'drip':
+        buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{cid}')])
+    buttons.extend([
         [InlineKeyboardButton(f'\U0001f4cb Pending: {pending:,}', callback_data=f'pending_requests:{cid}')],
         # Welcome DM
         [InlineKeyboardButton('\U0001f4ac Edit Welcome Message', callback_data=f'edit_welcome:{cid}')],
@@ -79,7 +84,7 @@ async def show_channel_settings(update, context, chat_id, edit=False):
         [InlineKeyboardButton('\U0001f4ca Channel Analytics', callback_data=f'analytics:{cid}')],
         [InlineKeyboardButton('\U0001f4e4 Export Data (CSV)', callback_data=f'export_csv:{cid}')],
         [InlineKeyboardButton('\U0001f519 Back to Dashboard', callback_data='dashboard')],
-    ]
+    ])
 
     kb = InlineKeyboardMarkup(buttons)
     if edit and update.callback_query:
