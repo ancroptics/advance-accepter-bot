@@ -2,9 +2,17 @@ import logging
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from database.models import db, TIER_LIMITS
+import config
 
 logger = logging.getLogger(__name__)
+
+# Tier limits for monthly approvals
+TIER_LIMITS = {
+    'free': {'monthly_approvals': 500},
+    'basic': {'monthly_approvals': 5000},
+    'pro': {'monthly_approvals': 50000},
+    'enterprise': {'monthly_approvals': -1},
+}
 
 # Batch sizes for processing
 BATCH_SIZES = [10, 50, 100, 500, 1000]
@@ -13,6 +21,10 @@ BATCH_SIZES = [10, 50, 100, 500, 1000]
 async def batch_approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/batch - Show batch approval panel for all channels with pending requests."""
     user_id = update.effective_user.id
+    db = context.application.bot_data.get('db')
+    if not db:
+        await update.message.reply_text("Bot not ready.")
+        return
     user = await db.get_user(user_id)
 
     if not user:
@@ -62,6 +74,11 @@ async def batch_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     data = query.data
     user_id = query.from_user.id
+
+    db = context.application.bot_data.get('db')
+    if not db:
+        await query.edit_message_text('Bot not ready.')
+        return
 
     if data.startswith('batch_select:'):
         chat_id = int(data.split(':')[1])
@@ -128,6 +145,10 @@ async def batch_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def _execute_batch_all(query, context, user_id):
     """Approve all pending requests across all channels."""
+    db = context.application.bot_data.get('db')
+    if not db:
+        await query.edit_message_text('Bot not ready.')
+        return
     channels = await db.get_user_channels(user_id)
     pending_channels = [c for c in channels if c.get('pending_requests', 0) > 0]
 
@@ -184,6 +205,10 @@ async def _execute_batch_all(query, context, user_id):
 
 async def _execute_batch_approve(query, context, user_id, chat_id, count):
     """Execute batch approve for a specific channel."""
+    db = context.application.bot_data.get('db')
+    if not db:
+        await query.edit_message_text('Bot not ready.')
+        return
     channel = await db.get_channel(chat_id)
     if not channel:
         await query.edit_message_text("Channel not found.")
@@ -251,6 +276,10 @@ async def _execute_batch_approve(query, context, user_id, chat_id, count):
 
 async def _execute_batch_decline(query, context, user_id, chat_id, count):
     """Execute batch decline for a channel."""
+    db = context.application.bot_data.get('db')
+    if not db:
+        await query.edit_message_text('Bot not ready.')
+        return
     channel = await db.get_channel(chat_id)
     if not channel:
         await query.edit_message_text("Channel not found.")
