@@ -18,7 +18,7 @@ from handlers.batch_approve import batch_approve_command, batch_button_handler
 from handlers.clone_bot import clone_command
 from handlers.broadcast import start_broadcast, receive_content, cancel_broadcast
 from handlers.welcome_dm import edit_welcome_receive, cancel_edit_welcome
-from handlers.channel_detection import my_chat_member_handler
+from handlers.channel_detection import channel_detection_handler
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def register_all_handlers(app):
     # Chat member updates (channel detection)
     try:
         from telegram.ext import ChatMemberHandler
-        app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
+        app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
     except ImportError:
         logger.warning("ChatMemberHandler not available")
 
