@@ -18,10 +18,16 @@ class DatabaseModels:
             await self.db.execute(sql)
             # Add columns that may be missing from initial migration
             extra_ddl = """
+            CREATE TABLE IF NOT EXISTS platform_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
             DO $$ BEGIN
                 ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS support_username TEXT;
                 ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS referral_enabled BOOLEAN DEFAULT FALSE;
                 ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS welcome_messages_json TEXT;
+                ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS watermark_enabled BOOLEAN DEFAULT FALSE;
+                ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS watermark_username TEXT;
             EXCEPTION WHEN others THEN NULL;
             END $$;
             """
@@ -75,7 +81,7 @@ class DatabaseModels:
             INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_username, chat_type, is_active, bot_is_admin, added_at)
             VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
             ON CONFLICT (chat_id) DO UPDATE SET
-                owner_id = $2, chat_title = COALESCE($3, managed_channels.chat_title),
+                chat_title = COALESCE($3, managed_channels.chat_title),
                 chat_username = COALESCE($4, managed_channels.chat_username),
                 chat_type = $5, is_active = TRUE, bot_is_admin = TRUE
         """, chat_id, owner_id, chat_title, chat_username, chat_type)
@@ -93,14 +99,16 @@ class DatabaseModels:
             INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_type, chat_username, added_at)
             VALUES ($1, $2, $3, $4, $5, NOW())
             ON CONFLICT (chat_id) DO UPDATE SET
-                owner_id = $2, chat_title = COALESCE($3, managed_channels.chat_title),
+                chat_title = COALESCE($3, managed_channels.chat_title),
                 chat_type = $4, chat_username = COALESCE($5, managed_channels.chat_username)
         """, chat_id, owner_id, chat_title, chat_type, username)
 
     async def remove_channel(self, chat_id):
         return await self.db.execute('DELETE FROM managed_channels WHERE chat_id = $1', chat_id)
 
-    async def get_all_channels(self):
+    async def get_all_channels(self, limit=None):
+        if limit:
+            return await self.db.fetch('SELECT * FROM managed_channels ORDER BY added_at DESC LIMIT $1', limit)
         return await self.db.fetch('SELECT * FROM managed_channels ORDER BY added_at')
 
     async def get_all_active_channels(self):
@@ -407,3 +415,39 @@ class DatabaseModels:
         rows = await self.db.fetch("SELECT * FROM bot_clones ORDER BY created_at DESC")
         return [dict(r) for r in rows]
 
+    # ==================== PLATFORM SETTINGS ====================
+    async def get_platform_setting(self, key, default=None):
+        """Get a platform-wide setting."""
+        try:
+            row = await self.db.fetchrow(
+                'SELECT value FROM platform_settings WHERE key = $1', key)
+            return row['value'] if row else default
+        except Exception:
+            return default
+
+    async def set_platform_setting(self, key, value):
+        """Set a platform-wide setting."""
+        await self.db.execute("""
+            INSERT INTO platform_settings (key, value) VALUES ($1, $2)
+            ON CONFLICT (key) DO UPDATE SET value = $2
+        """, key, str(value))
+
+    # ==================== CLONE STATUS ====================
+    async def update_clone_status(self, clone_id, is_active=True):
+        """Update clone bot active status."""
+        await self.db.execute(
+            'UPDATE bot_clones SET is_active = $2 WHERE id = $1', clone_id, is_active)
+
+    # ==================== REFERRAL LEADERBOARD ====================
+    async def get_top_referrers(self, limit=10):
+        """Get top referrers by referral count."""
+        return await self.db.fetch("""
+            SELECT eu.user_id, eu.username, eu.first_name, eu.coins,
+                   COUNT(r.user_id) as referral_count
+            FROM end_users eu
+            LEFT JOIN end_users r ON r.referrer_id = eu.user_id
+            WHERE eu.referrer_id IS NOT NULL OR eu.coins > 0
+            GROUP BY eu.user_id, eu.username, eu.first_name, eu.coins
+            ORDER BY referral_count DESC
+            LIMIT $1
+        """, limit)
