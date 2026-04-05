@@ -1,1 +1,299 @@
-aW1wb3J0IGxvZ2dpbmcKaW1wb3J0IGFzeW5jaW8KZnJvbSB0ZWxlZ3JhbSBpbXBvcnQgVXBkYXRlLCBJbmxpbmVLZXlib2FyZEJ1dHRvbiwgSW5saW5lS2V5Ym9hcmRNYXJrdXAKZnJvbSB0ZWxlZ3JhbS5leHQgaW1wb3J0IENvbnRleHRUeXBlcwpmcm9tIGRhdGFiYXNlLm1vZGVscyBpbXBvcnQgZGIsIFRJRVJfTElNSVRTCgpsb2dnZXIgPSBsb2dnaW5nLmdldExvZ2dlcihfX25hbWVfXykKCiMgQmF0Y2ggc2l6ZXMgZm9yIHByb2Nlc3NpbmcKQkFUQ0hfU0laRVMgPSBbMTAsIDUwLCAxMDAsIDUwMCwgMTAwMF0KCgphc3luYyBkZWYgYmF0Y2hfYXBwcm92ZV9jb21tYW5kKHVwZGF0ZTogVXBkYXRlLCBjb250ZXh0OiBDb250ZXh0VHlwZXMuREVGQVVMVF9UWVBFKToKICAgICIiIi9iYXRjaCAtIFNob3cgYmF0Y2ggYXBwcm92YWwgcGFuZWwgZm9yIGFsbCBjaGFubmVscyB3aXRoIHBlbmRpbmcgcmVxdWVzdHMuIiIiCiAgICB1c2VyX2lkID0gdXBkYXRlLmVmZmVjdGl2ZV91c2VyLmlkCiAgICB1c2VyID0gYXdhaXQgZGIuZ2V0X3VzZXIodXNlcl9pZCkKCiAgICBpZiBub3QgdXNlcjoKICAgICAgICBhd2FpdCB1cGRhdGUubWVzc2FnZS5yZXBseV90ZXh0KCLinoEgUGxlYXNlIC9zdGFydCBmaXJzdC4iKQogICAgICAgIHJldHVybgoKICAgIGlmIHVzZXIuZ2V0KCdpc19iYW5uZWQnKToKICAgICAgICBhd2FpdCB1cGRhdGUubWVzc2FnZS5yZXBseV90ZXh0KCLinoEgWW91IGFyZSBiYW5uZWQuIikKICAgICAgICByZXR1cm4KCiAgICBjaGFubmVscyA9IGF3YWl0IGRiLmdldF91c2VyX2NoYW5uZWxzKHVzZXJfaWQpCiAgICBpZiBub3QgY2hhbm5lbHM6CiAgICAgICAgYXdhaXQgdXBkYXRlLm1lc3NhZ2UucmVwbHlfdGV4dCgiTm8gY2hhbm5lbHMgZm91bmQuIFVzZSAvc3RhcnQgdG8gYWRkIG9uZS4iKQogICAgICAgIHJldHVybgoKICAgICMgRmlsdGVyIGNoYW5uZWxzIHdpdGggcGVuZGluZyByZXF1ZXN0cwogICAgcGVuZGluZ19jaGFubmVscyA9IFtjIGZvciBjIGluIGNoYW5uZWxzIGlmIGMuZ2V0KCdwZW5kaW5nX3JlcXVlc3RzJywgMCkgPiAwXQoKICAgIGlmIG5vdCBwZW5kaW5nX2NoYW5uZWxzOgogICAgICAgIGF3YWl0IHVwZGF0ZS5tZXNzYWdlLnJlcGx5X3RleHQoIuKcqCBObyBwZW5kaW5nIHJlcXVlc3RzIGluIGFueSBjaGFubmVsISIpCiAgICAgICAgcmV0dXJuCgogICAgdGV4dCA9ICI8Yj7wn5OLIEJhdGNoIEFwcHJvdmFsIFBhbmVsPC9iPlxuXG4iCiAgICBrZXlib2FyZCA9IFtdCgogICAgZm9yIGNoIGluIHBlbmRpbmdfY2hhbm5lbHM6CiAgICAgICAgdGl0bGUgPSBjaC5nZXQoJ2NoYXRfdGl0bGUnLCAnVW5rbm93bicpCiAgICAgICAgcGVuZGluZyA9IGNoLmdldCgncGVuZGluZ19yZXF1ZXN0cycsIDApCiAgICAgICAgY2hhdF9pZCA9IGNoWydjaGF0X2lkJ10KICAgICAgICB0ZXh0ICs9IGYi4oCiIDxiPnt0aXRsZX08L2I+IOKAlCB7cGVuZGluZ30gcGVuZGluZ1xuIgogICAgICAgIGtleWJvYXJkLmFwcGVuZChbCiAgICAgICAgICAgIElubGluZUtleWJvYXJkQnV0dG9uKGYi4pyFIHt0aXRsZX0iLCBjYWxsYmFja19kYXRhPWYiYmF0Y2hfc2VsZWN0OntjaGF0X2lkfSIpCiAgICAgICAgXSkKCiAgICBrZXlib2FyZC5hcHBlbmQoW0lubGluZUtleWJvYXJkQnV0dG9uKCLinoEgQXBwcm92ZSBBTEwgQ2hhbm5lbHMiLCBjYWxsYmFja19kYXRhPSJiYXRjaF9hbGwiKV0pCgogICAgYXdhaXQgdXBkYXRlLm1lc3NhZ2UucmVwbHlfdGV4dCgKICAgICAgICB0ZXh0LAogICAgICAgIHJlcGx5X21hcmt1cD1JbmxpbmVLZXlib2FyZE1hcmt1cChrZXlib2FyZCksCiAgICAgICAgcGFyc2VfbW9kZT0nSFRNTCcKICAgICkKCgphc3luYyBkZWYgYmF0Y2hfYnV0dG9uX2hhbmRsZXIodXBkYXRlOiBVcGRhdGUsIGNvbnRleHQ6IENvbnRleHRUeXBlcy5ERUZBVUxUX1RZUEUpOgogICAgIiIiSGFuZGxlIGJhdGNoIGFwcHJvdmFsIGJ1dHRvbnMuIiIiCiAgICBxdWVyeSA9IHVwZGF0ZS5jYWxsYmFja19xdWVyeQogICAgYXdhaXQgcXVlcnkuYW5zd2VyKCkKICAgIGRhdGEgPSBxdWVyeS5kYXRhCiAgICB1c2VyX2lkID0gcXVlcnkuZnJvbV91c2VyLmlkCgogICAgaWYgZGF0YS5zdGFydHN3aXRoKCdiYXRjaF9zZWxlY3Q6Jyk6CiAgICAgICAgY2hhdF9pZCA9IGludChkYXRhLnNwbGl0KCc6JylbMV0pCiAgICAgICAgYXdhaXQgX3Nob3dfYmF0Y2hfb3B0aW9ucyhxdWVyeSwgY2hhdF9pZCkKCiAgICBlbGlmIGRhdGEgPT0gJ2JhdGNoX2FsbCc6CiAgICAgICAgYXdhaXQgX2JhdGNoX2FwcHJvdmVfYWxsX2NoYW5uZWxzKHF1ZXJ5LCBjb250ZXh0LCB1c2VyX2lkKQoKICAgIGVsaWYgZGF0YS5zdGFydHN3aXRoKCdiYXBwcm92ZV8nKToKICAgICAgICAjIGJhcHByb3ZlX3tjaGF0X2lkfV97Y291bnR9CiAgICAgICAgcGFydHMgPSBkYXRhLnNwbGl0KCdfJykKICAgICAgICBjaGF0X2lkID0gaW50KHBhcnRzWzFdKQogICAgICAgIGNvdW50ID0gaW50KHBhcnRzWzJdKSBpZiBsZW4ocGFydHMpID4gMiBlbHNlIC0xICAjIC0xID0gYWxsCiAgICAgICAgYXdhaXQgX2V4ZWN1dGVfYmF0Y2hfYXBwcm92ZShxdWVyeSwgY29udGV4dCwgdXNlcl9pZCwgY2hhdF9pZCwgY291bnQpCgogICAgZWxpZiBkYXRhLnN0YXJ0c3dpdGgoJ2JkZWNsaW5lXycpOgogICAgICAgIHBhcnRzID0gZGF0YS5zcGxpdCgnXycpCiAgICAgICAgY2hhdF9pZCA9IGludChwYXJ0c1sxXSkKICAgICAgICBjb3VudCA9IGludChwYXJ0c1syXSkgaWYgbGVuKHBhcnRzKSA+IDIgZWxzZSAtMQogICAgICAgIGF3YWl0IF9leGVjdXRlX2JhdGNoX2RlY2xpbmUocXVlcnksIGNvbnRleHQsIHVzZXJfaWQsIGNoYXRfaWQsIGNvdW50KQoKCmFzeW5jIGRlZiBfc2hvd19iYXRjaF9vcHRpb25zKHF1ZXJ5LCBjaGF0X2lkKToKICAgICIiIlNob3cgYmF0Y2ggYXBwcm92ZS9kZWNsaW5lIG9wdGlvbnMgZm9yIGEgY2hhbm5lbC4iIiIKICAgIGNoYW5uZWwgPSBhd2FpdCBkYi5nZXRfY2hhbm5lbChjaGF0X2lkKQogICAgaWYgbm90IGNoYW5uZWw6CiAgICAgICAgYXdhaXQgcXVlcnkuZWRpdF9tZXNzYWdlX3RleHQoIkNoYW5uZWwgbm90IGZvdW5kLiIpCiAgICAgICAgcmV0dXJuCgogICAgdGl0bGUgPSBjaGFubmVsLmdldCgnY2hhdF90aXRsZScsICdVbmtub3duJykKICAgIHBlbmRpbmcgPSBhd2FpdCBkYi5nZXRfcGVuZGluZ19jb3VudChjaGF0X2lkKQoKICAgIHRleHQgPSAoCiAgICAgICAgZiI8Yj7wn5OLIEJhdGNoIEFjdGlvbnMgZm9yIHt0aXRsZX08L2I+XG5cbiIKICAgICAgICBmIuKPsyBQZW5kaW5nOiA8Yj57cGVuZGluZ308L2I+IHJlcXVlc3RzXG5cbiIKICAgICAgICBmIkNob29zZSBob3cgbWFueSB0byBwcm9jZXNzOiIKICAgICkKCiAgICBrZXlib2FyZCA9IFtdCgogICAgIyBBcHByb3ZlIGJ1dHRvbnMKICAgIGFwcHJvdmVfcm93ID0gW10KICAgIGZvciBzaXplIGluIEJBVENIX1NJWkVTOgogICAgICAgIGlmIHNpemUgPD0gcGVuZGluZzoKICAgICAgICAgICAgYXBwcm92ZV9yb3cuYXBwZW5kKElubGluZUtleWJvYXJkQnV0dG9uKAogICAgICAgICAgICAgICAgZiLinhiB7c2l6ZX0iLCBjYWxsYmFja19kYXRhPWYiYmFwcHJvdmVfe2NoYXRfaWR9X3tzaXplfSIpKQogICAgaWYgYXBwcm92ZV9yb3c6CiAgICAgICAga2V5Ym9hcmQuYXBwZW5kKGFwcHJvdmVfcm93KQoKICAgIGtleWJvYXJkLmFwcGVuZChbCiAgICAgICAgSW5saW5lS2V5Ym9hcmRCdXR0b24oZiLinhiDinIUgQXBwcm92ZSBBTEwgKHtwZW5kaW5nfSkiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNhbGxiYWNrX2RhdGE9ZiJiYXBwcm92ZV97Y2hhdF9pZH1fLTEiKQogICAgXSkKCiAgICAjIERlY2xpbmUgYnV0dG9ucwogICAgZGVjbGluZV9yb3cgPSBbXQogICAgZm9yIHNpemUgaW4gQkFUQ0hfU0laRVM6CiAgICAgICAgaWYgc2l6ZSA8PSBwZW5kaW5nOgogICAgICAgICAgICBkZWNsaW5lX3Jvdy5hcHBlbmQoSW5saW5lS2V5Ym9hcmRCdXR0b24oCiAgICAgICAgICAgICAgICBmIuKdjCB7c2l6ZX0iLCBjYWxsYmFja19kYXRhPWYiYmRlY2xpbmVfe2NoYXRfaWR9X3tzaXplfSIpKQogICAgaWYgZGVjbGluZV9yb3c6CiAgICAgICAga2V5Ym9hcmQuYXBwZW5kKGRlY2xpbmVfcm93KQoKICAgIGtleWJvYXJkLmFwcGVuZChbCiAgICAgICAgSW5saW5lS2V5Ym9hcmRCdXR0b24oZiLinuCDinYwgRGVjbGluZSBBTEwgKHtwZW5kaW5nfSkiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNhbGxiYWNrX2RhdGE9ZiJiZGVjbGluZV97Y2hhdF9pZH1fLTEiKQogICAgXSkKCiAgICBrZXlib2FyZC5hcHBlbmQoW0lubGluZUtleWJvYXJkQnV0dG9uKCLirIUgQmFjayIsIGNhbGxiYWNrX2RhdGE9ImJhdGNoX2JhY2siKV0pCgogICAgYXdhaXQgcXVlcnkuZWRpdF9tZXNzYWdlX3RleHQoCiAgICAgICAgdGV4dCwKICAgICAgICByZXBseV9tYXJrdXA9SW5saW5lS2V5Ym9hcmRNYXJrdXAoa2V5Ym9hcmQpLAogICAgICAgIHBhcnNlX21vZGU9J0hUTUwnCiAgICApCgoKYXN5bmMgZGVmIF9iYXRjaF9hcHByb3ZlX2FsbF9jaGFubmVscyhxdWVyeSwgY29udGV4dCwgdXNlcl9pZCk6CiAgICAiIiJBcHByb3ZlIGFsbCBwZW5kaW5nIHJlcXVlc3RzIGFjcm9zcyBhbGwgY2hhbm5lbHMuIiIiCiAgICBjaGFubmVscyA9IGF3YWl0IGRiLmdldF91c2VyX2NoYW5uZWxzKHVzZXJfaWQpCiAgICB0b3RhbF9hcHByb3ZlZCA9IDAKICAgIHRvdGFsX2ZhaWxlZCA9IDAKCiAgICAjIENoZWNrIGxpbWl0cwogICAgcmVtYWluaW5nLCBsaW1pdCA9IGF3YWl0IGRiLmNoZWNrX2FwcHJvdmFsX2xpbWl0KHVzZXJfaWQpCgogICAgc3RhdHVzX21zZyA9IGF3YWl0IHF1ZXJ5LmVkaXRfbWVzc2FnZV90ZXh0KAogICAgICAgICI8Yj7imLPvuI8gQmF0Y2ggYXBwcm92aW5nIGFsbCBjaGFubmVscy4uLjwvYj5cblBsZWFzZSB3YWl0Li4uIiwKICAgICAgICBwYXJzZV9tb2RlPSdIVE1MJwogICAgKQoKICAgIGZvciBjaCBpbiBjaGFubmVsczoKICAgICAgICBjaGF0X2lkID0gY2hbJ2NoYXRfaWQnXQogICAgICAgIHBlbmRpbmcgPSBhd2FpdCBkYi5nZXRfcGVuZGluZ19yZXF1ZXN0cyhjaGF0X2lkLCBsaW1pdD0xMDAwMCkKCiAgICAgICAgZm9yIHJlcSBpbiBwZW5kaW5nOgogICAgICAgICAgICBpZiByZW1haW5pbmcgPD0gMCBhbmQgbGltaXQgIT0gLTE6CiAgICAgICAgICAgICAgICBicmVhawoKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgYXdhaXQgY29udGV4dC5ib3QuYXBwcm92ZV9jaGF0X2pvaW5fcmVxdWVzdCgKICAgICAgICAgICAgICAgICAgICBjaGF0X2lkPWNoYXRfaWQsIHVzZXJfaWQ9cmVxWyd1c2VyX2lkJ10pCiAgICAgICAgICAgICAgICBhd2FpdCBkYi5hcHByb3ZlX3JlcXVlc3QoY2hhdF9pZCwgcmVxWyd1c2VyX2lkJ10pCiAgICAgICAgICAgICAgICB0b3RhbF9hcHByb3ZlZCArPSAxCiAgICAgICAgICAgICAgICByZW1haW5pbmcgLT0gMQogICAgICAgICAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICAgICAgICAgICAgICBsb2dnZXIud2FybmluZyhmIkZhaWxlZCB0byBhcHByb3ZlIHtyZXFbJ3VzZXJfaWQnXX0gaW4ge2NoYXRfaWR9OiB7ZX0iKQogICAgICAgICAgICAgICAgdG90YWxfZmFpbGVkICs9IDEKCiAgICAgICAgICAgICMgUmF0ZSBsaW1pdCBwcm90ZWN0aW9uCiAgICAgICAgICAgIGlmIHRvdGFsX2FwcHJvdmVkICUgMzAgPT0gMDoKICAgICAgICAgICAgICAgIGF3YWl0IGFzeW5jaW8uc2xlZXAoMSkKCiAgICAjIFVwZGF0ZSBtb250aGx5IGNvdW50CiAgICBpZiB0b3RhbF9hcHByb3ZlZCA+IDA6CiAgICAgICAgYXdhaXQgZGIuaW5jcmVtZW50X2FwcHJvdmFscyh1c2VyX2lkLCB0b3RhbF9hcHByb3ZlZCkKCiAgICByZXN1bHRfdGV4dCA9ICgKICAgICAgICBmIjxiPuKcoCBCYXRjaCBDb21wbGV0ZSE8L2I+XG5cbiIKICAgICAgICBmIuKchSBBcHByb3ZlZDogPGI+e3RvdGFsX2FwcHJvdmVkfTwvYj5cbiIKICAgICkKICAgIGlmIHRvdGFsX2ZhaWxlZDoKICAgICAgICByZXN1bHRfdGV4dCArPSBmIuKdjCBGYWlsZWQ6IDxiPnt0b3RhbF9mYWlsZWR9PC9iPlxuIgogICAgaWYgcmVtYWluaW5nIDw9IDAgYW5kIGxpbWl0ICE9IC0xOgogICAgICAgIHJlc3VsdF90ZXh0ICs9IGYiXG7imqAgTW9udGhseSBsaW1pdCByZWFjaGVkICh7bGltaXR9KSIKCiAgICBhd2FpdCBzdGF0dXNfbXNnLmVkaXRfdGV4dCh0ZXh0PXJlc3VsdF90ZXh0LCBwYXJzZV9tb2RlPSdIVE1MJykKCgphc3luYyBkZWYgX2V4ZWN1dGVfYmF0Y2hfYXBwcm92ZShxdWVyeSwgY29udGV4dCwgdXNlcl9pZCwgY2hhdF9pZCwgY291bnQpOgogICAgIiIiRXhlY3V0ZSBiYXRjaCBhcHByb3ZhbCBmb3IgYSBjaGFubmVsLiIiIgogICAgY2hhbm5lbCA9IGF3YWl0IGRiLmdldF9jaGFubmVsKGNoYXRfaWQpCiAgICBpZiBub3QgY2hhbm5lbDoKICAgICAgICBhd2FpdCBxdWVyeS5lZGl0X21lc3NhZ2VfdGV4dCgiQ2hhbm5lbCBub3QgZm91bmQuIikKICAgICAgICByZXR1cm4KCiAgICAjIENoZWNrIGxpbWl0cwogICAgcmVtYWluaW5nLCBsaW1pdCA9IGF3YWl0IGRiLmNoZWNrX2FwcHJvdmFsX2xpbWl0KHVzZXJfaWQpCgogICAgIyBHZXQgcGVuZGluZyByZXF1ZXN0cwogICAgZmV0Y2hfbGltaXQgPSBjb3VudCBpZiBjb3VudCA+IDAgZWxzZSAxMDAwMAogICAgcGVuZGluZyA9IGF3YWl0IGRiLmdldF9wZW5kaW5nX3JlcXVlc3RzKGNoYXRfaWQsIGxpbWl0PWZldGNoX2xpbWl0KQoKICAgIGlmIG5vdCBwZW5kaW5nOgogICAgICAgIGF3YWl0IHF1ZXJ5LmVkaXRfbWVzc2FnZV90ZXh0KCLinoggTm8gcGVuZGluZyByZXF1ZXN0cyEiKQogICAgICAgIHJldHVybgoKICAgIHRpdGxlID0gY2hhbm5lbC5nZXQoJ2NoYXRfdGl0bGUnLCAnVW5rbm93bicpCiAgICB0b3RhbCA9IGxlbihwZW5kaW5nKQoKICAgIHN0YXR1c19tc2cgPSBhd2FpdCBxdWVyeS5lZGl0X21lc3NhZ2VfdGV4dCgKICAgICAgICBmIjxiPuKYs++4jyBBcHByb3Zpbmcge3RvdGFsfSByZXF1ZXN0cyBpbiB7dGl0bGV9Li4uPC9iPlxuUGxlYXNlIHdhaXQuLi4iLAogICAgICAgIHBhcnNlX21vZGU9J0hUTUwnCiAgICApCgogICAgYXBwcm92ZWQgPSAwCiAgICBmYWlsZWQgPSAwCgogICAgZm9yIHJlcSBpbiBwZW5kaW5nOgogICAgICAgIGlmIHJlbWFpbmluZyA8PSAwIGFuZCBsaW1pdCAhPSAtMToKICAgICAgICAgICAgYnJlYWsKCiAgICAgICAgdHJ5OgogICAgICAgICAgICBhd2FpdCBjb250ZXh0LmJvdC5hcHByb3ZlX2NoYXRfam9pbl9yZXF1ZXN0KAogICAgICAgICAgICAgICAgY2hhdF9pZD1jaGF0X2lkLCB1c2VyX2lkPXJlcVsndXNlcl9pZCddKQogICAgICAgICAgICBhd2FpdCBkYi5hcHByb3ZlX3JlcXVlc3QoY2hhdF9pZCwgcmVxWyd1c2VyX2lkJ10pCiAgICAgICAgICAgIGFwcHJvdmVkICs9IDEKICAgICAgICAgICAgcmVtYWluaW5nIC09IDEKICAgICAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICAgICAgICAgIGxvZ2dlci53YXJuaW5nKGYiRmFpbGVkIHRvIGFwcHJvdmUge3JlcVsndXNlcl9pZCddfToge2V9IikKICAgICAgICAgICAgZmFpbGVkICs9IDEKCiAgICAgICAgIyBQcm9ncmVzcyB1cGRhdGUgZXZlcnkgNTAKICAgICAgICBpZiAoYXBwcm92ZWQgKyBmYWlsZWQpICUgNTAgPT0gMDoKICAgICAgICAgICAgcHJvZ3Jlc3MgPSAoYXBwcm92ZWQgKyBmYWlsZWQpIC8gdG90YWwgKiAxMDAKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgYXdhaXQgc3RhdHVzX21zZy5lZGl0X3RleHQoCiAgICAgICAgICAgICAgICAgICAgZiI8Yj7imLPvuI8gQXBwcm92aW5nLi4uIHtwcm9ncmVzczouMGZ9JTwvYj5cbiIKICAgICAgICAgICAgICAgICAgICBmIuKchSB7YXBwcm92ZWR9L3t0b3RhbH0iLAogICAgICAgICAgICAgICAgICAgIHBhcnNlX21vZGU9J0hUTUwnCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgIGV4Y2VwdDoKICAgICAgICAgICAgICAgIHBhc3MKCiAgICAgICAgIyBSYXRlIGxpbWl0CiAgICAgICAgaWYgYXBwcm92ZWQgJSAzMCA9PSAwOgogICAgICAgICAgICBhd2FpdCBhc3luY2lvLnNsZWVwKDEpCgogICAgIyBVcGRhdGUgbW9udGhseSBjb3VudAogICAgaWYgYXBwcm92ZWQgPiAwOgogICAgICAgIGF3YWl0IGRiLmluY3JlbWVudF9hcHByb3ZhbHModXNlcl9pZCwgYXBwcm92ZWQpCgogICAgcmVzdWx0X3RleHQgPSAoCiAgICAgICAgZiI8Yj7inKAgQmF0Y2ggQXBwcm92ZSBDb21wbGV0ZSE8L2I+XG5cbiIKICAgICAgICBmIvCfk6wge3RpdGxlfVxuIgogICAgICAgIGYi4pyFIEFwcHJvdmVkOiA8Yj57YXBwcm92ZWR9PC9iPlxuIgogICAgKQogICAgaWYgZmFpbGVkOgogICAgICAgIHJlc3VsdF90ZXh0ICs9IGYi4p2MIEZhaWxlZDogPGI+e2ZhaWxlZH08L2I+XG4iCiAgICBpZiByZW1haW5pbmcgPD0gMCBhbmQgbGltaXQgIT0gLTE6CiAgICAgICAgcmVzdWx0X3RleHQgKz0gZiJcbuKaoExvbXQgcmVhY2hlZCAoe2xpbWl0fS9tb250aCkiCgogICAgYXdhaXQgc3RhdHVzX21zZy5lZGl0X3RleHQodGV4dD1yZXN1bHRfdGV4dCwgcGFyc2VfbW9kZT0nSFRNTCcpCgoKYXN5bmMgZGVmIF9leGVjdXRlX2JhdGNoX2RlY2xpbmUocXVlcnksIGNvbnRleHQsIHVzZXJfaWQsIGNoYXRfaWQsIGNvdW50KToKICAgICIiIkV4ZWN1dGUgYmF0Y2ggZGVjbGluZSBmb3IgYSBjaGFubmVsLiIiIgogICAgY2hhbm5lbCA9IGF3YWl0IGRiLmdldF9jaGFubmVsKGNoYXRfaWQpCiAgICBpZiBub3QgY2hhbm5lbDoKICAgICAgICBhd2FpdCBxdWVyeS5lZGl0X21lc3NhZ2VfdGV4dCgiQ2hhbm5lbCBub3QgZm91bmQuIikKICAgICAgICByZXR1cm4KCiAgICBmZXRjaF9saW1pdCA9IGNvdW50IGlmIGNvdW50ID4gMCBlbHNlIDEwMDAwCiAgICBwZW5kaW5nID0gYXdhaXQgZGIuZ2V0X3BlbmRpbmdfcmVxdWVzdHMoY2hhdF9pZCwgbGltaXQ9ZmV0Y2hfbGltaXQpCgogICAgaWYgbm90IHBlbmRpbmc6CiAgICAgICAgYXdhaXQgcXVlcnkuZWRpdF9tZXNzYWdlX3RleHQoIuKeiCBObyBwZW5kaW5nIHJlcXVlc3RzISIpCiAgICAgICAgcmV0dXJuCgogICAgdGl0bGUgPSBjaGFubmVsLmdldCgnY2hhdF90aXRsZScsICdVbmtub3duJykKICAgIHRvdGFsID0gbGVuKHBlbmRpbmcpCgogICAgc3RhdHVzX21zZyA9IGF3YWl0IHF1ZXJ5LmVkaXRfbWVzc2FnZV90ZXh0KAogICAgICAgIGYiPGI+4piz77iPIERlY2xpbmluZyB7dG90YWx9IHJlcXVlc3RzIGluIHt0aXRsZX0uLi48L2I+XG5QbGVhc2Ugd2FpdC4uLiIsCiAgICAgICAgcGFyc2VfbW9kZT0nSFRNTCcKICAgICkKCiAgICBkZWNsaW5lZCA9IDAKICAgIGZhaWxlZCA9IDAKCiAgICBmb3IgcmVxIGluIHBlbmRpbmc6CiAgICAgICAgdHJ5OgogICAgICAgICAgICBhd2FpdCBjb250ZXh0LmJvdC5kZWNsaW5lX2NoYXRfam9pbl9yZXF1ZXN0KAogICAgICAgICAgICAgICAgY2hhdF9pZD1jaGF0X2lkLCB1c2VyX2lkPXJlcVsndXNlcl9pZCddKQogICAgICAgICAgICBhd2FpdCBkYi5kZWNsaW5lX3JlcXVlc3QoY2hhdF9pZCwgcmVxWyd1c2VyX2lkJ10pCiAgICAgICAgICAgIGRlY2xpbmVkICs9IDEKICAgICAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICAgICAgICAgIGxvZ2dlci53YXJuaW5nKGYiRmFpbGVkIHRvIGRlY2xpbmUge3JlcVsndXNlcl9pZCddfToge2V9IikKICAgICAgICAgICAgZmFpbGVkICs9IDEKCiAgICAgICAgIyBSYXRlIGxpbWl0CiAgICAgICAgaWYgZGVjbGluZWQgJSAzMCA9PSAwOgogICAgICAgICAgICBhd2FpdCBhc3luY2lvLnNsZWVwKDEpCgogICAgcmVzdWx0X3RleHQgPSAoCiAgICAgICAgZiI8Yj7inKAgQmF0Y2ggRGVjbGluZSBDb21wbGV0ZSE8L2I+XG5cbiIKICAgICAgICBmIvCfjKwge3RpdGxlfVxuIgogICAgICAgIGYi4p2MIERlY2xpbmVkOiA8Yj57ZGVjbGluZWR9PC9iPlxuIgogICAgKQogICAgaWYgZmFpbGVkOgogICAgICAgIHJlc3VsdF90ZXh0ICs9IGYi4pqgIEZhaWxlZDogPGI+e2ZhaWxlZH08L2I+XG4iCgogICAgYXdhaXQgc3RhdHVzX21zZy5lZGl0X3RleHQodGV4dD1yZXN1bHRfdGV4dCwgcGFyc2VfbW9kZT0nSFRNTCcpCg==
+import logging
+import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+from database.models import db, TIER_LIMITS
+
+logger = logging.getLogger(__name__)
+
+# Batch sizes for processing
+BATCH_SIZES = [10, 50, 100, 500, 1000]
+
+
+async def batch_approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/batch - Show batch approval panel for all channels with pending requests."""
+    user_id = update.effective_user.id
+    user = await db.get_user(user_id)
+
+    if not user:
+        await update.message.reply_text("\u26a0\ufe0f Please /start first.")
+        return
+
+    if user.get('is_banned'):
+        await update.message.reply_text("\u26a0\ufe0f You are banned.")
+        return
+
+    channels = await db.get_user_channels(user_id)
+    if not channels:
+        await update.message.reply_text("No channels found. Use /start to add one.")
+        return
+
+    # Filter channels with pending requests
+    pending_channels = [c for c in channels if c.get('pending_requests', 0) > 0]
+
+    if not pending_channels:
+        await update.message.reply_text("\u2728 No pending requests in any channel!")
+        return
+
+    text = "<b>\ud83d\udccb Batch Approval Panel</b>\n\n"
+    keyboard = []
+
+    for ch in pending_channels:
+        title = ch.get('chat_title', 'Unknown')
+        pending = ch.get('pending_requests', 0)
+        chat_id = ch['chat_id']
+        text += f"\u2022 <b>{title}</b> \u2014 {pending} pending\n"
+        keyboard.append([
+            InlineKeyboardButton(f"\u2705 {title}", callback_data=f"batch_select:{chat_id}")
+        ])
+
+    keyboard.append([InlineKeyboardButton("\u26a0\ufe0f Approve ALL Channels", callback_data="batch_all")])
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
+
+
+async def batch_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle batch approval buttons."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+
+    if data.startswith('batch_select:'):
+        chat_id = int(data.split(':')[1])
+        channel = await db.get_channel(chat_id)
+        if not channel:
+            await query.edit_message_text("Channel not found.")
+            return
+
+        title = channel.get('chat_title', 'Unknown')
+        pending = channel.get('pending_requests', 0)
+
+        keyboard = []
+        for size in BATCH_SIZES:
+            if size <= pending:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"\u2705 Approve {size}",
+                        callback_data=f"batch_approve:{chat_id}:{size}"
+                    ),
+                    InlineKeyboardButton(
+                        f"\u274c Decline {size}",
+                        callback_data=f"batch_decline:{chat_id}:{size}"
+                    )
+                ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"\u2705 Approve ALL ({pending})",
+                callback_data=f"batch_approve:{chat_id}:-1"
+            ),
+            InlineKeyboardButton(
+                f"\u274c Decline ALL ({pending})",
+                callback_data=f"batch_decline:{chat_id}:-1"
+            )
+        ])
+        keyboard.append([InlineKeyboardButton("\u25c0\ufe0f Back", callback_data="batch_back")])
+
+        await query.edit_message_text(
+            f"<b>\ud83d\udccb {title}</b>\n\n"
+            f"Pending requests: <b>{pending}</b>\n\n"
+            f"Select batch size:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+
+    elif data == 'batch_all':
+        await _execute_batch_all(query, context, user_id)
+
+    elif data.startswith('batch_approve:'):
+        parts = data.split(':')
+        chat_id = int(parts[1])
+        count = int(parts[2])
+        await _execute_batch_approve(query, context, user_id, chat_id, count)
+
+    elif data.startswith('batch_decline:'):
+        parts = data.split(':')
+        chat_id = int(parts[1])
+        count = int(parts[2])
+        await _execute_batch_decline(query, context, user_id, chat_id, count)
+
+    elif data == 'batch_back':
+        await batch_approve_command(update, context)
+
+
+async def _execute_batch_all(query, context, user_id):
+    """Approve all pending requests across all channels."""
+    channels = await db.get_user_channels(user_id)
+    pending_channels = [c for c in channels if c.get('pending_requests', 0) > 0]
+
+    if not pending_channels:
+        await query.edit_message_text("\u2728 No pending requests!")
+        return
+
+    total_approved = 0
+    total_failed = 0
+    results = []
+
+    status_msg = await query.edit_message_text(
+        "<b>\u26a1 Batch approving all channels...</b>\nPlease wait...",
+        parse_mode='HTML'
+    )
+
+    for ch in pending_channels:
+        chat_id = ch['chat_id']
+        title = ch.get('chat_title', 'Unknown')
+        pending = await db.get_pending_requests(chat_id, limit=10000)
+
+        approved = 0
+        failed = 0
+        for req in pending:
+            try:
+                await context.bot.approve_chat_join_request(
+                    chat_id=chat_id, user_id=req['user_id'])
+                await db.approve_request(chat_id, req['user_id'])
+                approved += 1
+            except Exception as e:
+                logger.warning(f"Failed to approve {req['user_id']}: {e}")
+                failed += 1
+
+            if approved % 30 == 0:
+                await asyncio.sleep(1)
+
+        total_approved += approved
+        total_failed += failed
+        results.append(f"\u2022 {title}: {approved} approved, {failed} failed")
+
+    if total_approved > 0:
+        await db.increment_approvals(user_id, total_approved)
+
+    result_text = (
+        f"<b>\u2714 Batch Approve Complete!</b>\n\n"
+        + "\n".join(results) + "\n\n"
+        f"Total: <b>{total_approved}</b> approved"
+    )
+    if total_failed:
+        result_text += f", <b>{total_failed}</b> failed"
+
+    await status_msg.edit_text(text=result_text, parse_mode='HTML')
+
+
+async def _execute_batch_approve(query, context, user_id, chat_id, count):
+    """Execute batch approve for a specific channel."""
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await query.edit_message_text("Channel not found.")
+        return
+
+    user = await db.get_user(user_id)
+    tier = user.get('tier', 'free') if user else 'free'
+    limits = TIER_LIMITS.get(tier, TIER_LIMITS['free'])
+    monthly_limit = limits.get('monthly_approvals', 500)
+    used = user.get('monthly_approvals', 0) if user else 0
+    remaining = monthly_limit - used
+
+    fetch_limit = count if count > 0 else 10000
+    pending = await db.get_pending_requests(chat_id, limit=fetch_limit)
+
+    if not pending:
+        await query.edit_message_text("\u2728 No pending requests!")
+        return
+
+    # Limit by remaining quota
+    if monthly_limit != -1:
+        pending = pending[:remaining]
+
+    title = channel.get('chat_title', 'Unknown')
+    total = len(pending)
+
+    status_msg = await query.edit_message_text(
+        f"<b>\u26a1 Approving {total} requests in {title}...</b>\nPlease wait...",
+        parse_mode='HTML'
+    )
+
+    approved = 0
+    failed = 0
+    limit = monthly_limit
+
+    for req in pending:
+        try:
+            await context.bot.approve_chat_join_request(
+                chat_id=chat_id, user_id=req['user_id'])
+            await db.approve_request(chat_id, req['user_id'])
+            approved += 1
+        except Exception as e:
+            logger.warning(f"Failed to approve {req['user_id']}: {e}")
+            failed += 1
+
+        # Rate limit
+        if approved % 30 == 0:
+            await asyncio.sleep(1)
+
+    if approved > 0:
+        await db.increment_approvals(user_id, approved)
+
+    result_text = (
+        f"<b>\u2714 Batch Approve Complete!</b>\n\n"
+        f"\ud83d\udcec {title}\n"
+        f"\u2705 Approved: <b>{approved}</b>\n"
+    )
+    if failed:
+        result_text += f"\u274c Failed: <b>{failed}</b>\n"
+    if remaining <= 0 and limit != -1:
+        result_text += f"\n\u26a0Limit reached ({limit}/month)"
+
+    await status_msg.edit_text(text=result_text, parse_mode='HTML')
+
+
+async def _execute_batch_decline(query, context, user_id, chat_id, count):
+    """Execute batch decline for a channel."""
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await query.edit_message_text("Channel not found.")
+        return
+
+    fetch_limit = count if count > 0 else 10000
+    pending = await db.get_pending_requests(chat_id, limit=fetch_limit)
+
+    if not pending:
+        await query.edit_message_text("\u2728 No pending requests!")
+        return
+
+    title = channel.get('chat_title', 'Unknown')
+    total = len(pending)
+
+    status_msg = await query.edit_message_text(
+        f"<b>\u26b3\ufe0f Declining {total} requests in {title}...</b>\nPlease wait...",
+        parse_mode='HTML'
+    )
+
+    declined = 0
+    failed = 0
+
+    for req in pending:
+        try:
+            await context.bot.decline_chat_join_request(
+                chat_id=chat_id, user_id=req['user_id'])
+            await db.decline_request(chat_id, req['user_id'])
+            declined += 1
+        except Exception as e:
+            logger.warning(f"Failed to decline {req['user_id']}: {e}")
+            failed += 1
+
+        # Rate limit
+        if declined % 30 == 0:
+            await asyncio.sleep(1)
+
+    result_text = (
+        f"<b>\u2714 Batch Decline Complete!</b>\n\n"
+        f"\ud83c\udf2c {title}\n"
+        f"\u274c Declined: <b>{declined}</b>\n"
+    )
+    if failed:
+        result_text += f"\u26a0 Failed: <b>{failed}</b>\n"
+
+    await status_msg.edit_text(text=result_text, parse_mode='HTML')
