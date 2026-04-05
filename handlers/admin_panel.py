@@ -46,6 +46,7 @@ async def show_dashboard(update, context, edit=False):
          InlineKeyboardButton('\U0001f4ca Analytics', callback_data='analytics_overview')],
         [InlineKeyboardButton('\U0001f4dd Templates', callback_data='templates_menu'),
          InlineKeyboardButton('\U0001f916 Auto Poster', callback_data='auto_poster_menu')],
+        [InlineKeyboardButton('\U0001f4ac Support', callback_data='show_support')],
     ])
     # Conditionally show Cross-Promo and Clone Bot based on feature flags
     row4 = []
@@ -96,6 +97,7 @@ async def superadmin_handler(update, context):
         [InlineKeyboardButton('\U0001f48e Manage Subs', callback_data='sa_manage_subs')],
         [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
         [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
+        [InlineKeyboardButton('\U0001f3a8 Manage Watermark', callback_data='sa_manage_watermark')],
         [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
         [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
     ]
@@ -205,4 +207,73 @@ async def show_my_channels(update, context):
         text += f"   Mode: {auto}\n\n"
         buttons.append([InlineKeyboardButton(f"\u2699\ufe0f {ch['chat_title'][:25]}", callback_data=f"manage_channel:{ch['chat_id']}")])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def sa_manage_watermark(update, context):
+    """FIX 5: Superadmin watermark management."""
+    query = update.callback_query
+    await query.answer()
+    db = context.application.bot_data.get('db')
+
+    enabled = await db.get_platform_setting('global_watermark_enabled', 'true')
+    message = await db.get_platform_setting('global_watermark_message', '')
+
+    status = '\u2705 ON' if enabled.lower() == 'true' else '\u274c OFF'
+    msg_preview = message[:100] if message else '(default)'
+
+    text = (f'\U0001f3a8 WATERMARK MANAGEMENT\n\n'
+            f'Status: {status}\n'
+            f'Message: {msg_preview}\n\n'
+            f'This watermark appears on all welcome and force-sub messages for free plan users.')
+
+    toggle_text = '\u274c Turn OFF' if enabled.lower() == 'true' else '\u2705 Turn ON'
+    buttons = [
+        [InlineKeyboardButton(toggle_text, callback_data='sa_toggle_watermark')],
+        [InlineKeyboardButton('\u270f\ufe0f Edit Message', callback_data='sa_edit_watermark_msg')],
+        [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def sa_toggle_watermark(update, context):
+    query = update.callback_query
+    await query.answer()
+    db = context.application.bot_data.get('db')
+    current = await db.get_platform_setting('global_watermark_enabled', 'true')
+    new_val = 'false' if current.lower() == 'true' else 'true'
+    await db.set_platform_setting('global_watermark_enabled', new_val)
+    await sa_manage_watermark(update, context)
+
+async def sa_edit_watermark_msg(update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['awaiting_watermark_message'] = True
+    text = ('\u270f\ufe0f EDIT WATERMARK MESSAGE\n\n'
+            'Send the new watermark message.\n'
+            'Variables: {channel_name}, {bot_name}\n\n'
+            'Send /cancel to cancel.')
+    buttons = [[InlineKeyboardButton('\U0001f519 Cancel', callback_data='sa_manage_watermark')]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def sa_watermark_msg_received(update, context):
+    if not context.user_data.get('awaiting_watermark_message'):
+        return
+    context.user_data['awaiting_watermark_message'] = False
+    db = context.application.bot_data.get('db')
+    new_msg = update.message.text.strip()
+    if new_msg == '/cancel':
+        await update.message.reply_text('Cancelled.')
+        return
+    await db.set_platform_setting('global_watermark_message', new_msg)
+    await update.message.reply_text(f'\u2705 Watermark message updated to:\n{new_msg}')
+
+async def show_support_handler(update, context):
+    """FIX 4: Show support contact on dashboard."""
+    query = update.callback_query
+    await query.answer()
+    support = getattr(config, 'SUPPORT_USERNAME', None) or 'Not configured'
+    if support and not support.startswith('@'):
+        support = f'@{support}'
+    text = f'\U0001f4ac SUPPORT\n\nContact: {support}'
+    buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
