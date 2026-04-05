@@ -10,7 +10,7 @@ from telegram.ext import Application
 
 import config
 from database.connection import DatabasePool
-from database.models import Database
+from database.models import DatabaseModels
 from services.clone_manager import CloneManager
 from services.scheduler_service import SchedulerService
 from handlers import register_all_handlers
@@ -36,7 +36,7 @@ class Bot:
 
             self.db_pool = DatabasePool()
             pool = await self.db_pool.create_pool()
-            self.db = Database(pool)
+            self.db = DatabaseModels(pool)
             await self.db.create_tables()
             logger.info('Database connected and tables created')
 
