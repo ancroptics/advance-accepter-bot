@@ -140,13 +140,13 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
         InlineKeyboardButton(f'\U0001f4cb Pending ({pending})', callback_data=f'pending_requests:{chat_id}'),
         InlineKeyboardButton('\U0001f504 Sync Pending', callback_data=f'sync_pending:{chat_id}'),
     ])
+    if mode == 'drip':
+        buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
     if pending > 0:
         buttons.append([
             InlineKeyboardButton(f'\u2705 Approve All ({pending})', callback_data=f'batch_approve:{chat_id}'),
             InlineKeyboardButton('\u274c Decline All', callback_data=f'decline_all:{chat_id}'),
         ])
-        if mode == 'drip':
-            buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
     buttons.append([
         InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
@@ -451,18 +451,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        f'\U0001f4ca Telegram pending: {telegram_pending}\n'
                        f'\U0001f4be Tracked in DB: {db_pending}\n\n')
 
-                if telegram_pending > db_pending:
-                    diff = telegram_pending - db_pending
-                    msg += (f'\u26a0\ufe0f {diff} old request(s) not tracked in bot.\n\n'
-                            f'\U0001f4a1 These were made before the bot was added as admin.\n'
-                            f'To approve them: Open Telegram \u2192 Channel \u2192 Recent Actions \u2192 Join Requests.\n\n'
-                            f'\u2705 All new requests are now tracked and managed automatically!')
+                untracked = max(0, telegram_pending - db_pending)
+
+                if untracked > 0:
+                    msg += (f'\u26a0\ufe0f {untracked} old request(s) not tracked in bot.\n'
+                            f'These existed before the bot started tracking.\n\n'
+                            f'\U0001f447 Use the buttons below to approve or decline ALL '
+                            f'{telegram_pending} pending request(s) (tracked + untracked):')
                 elif telegram_pending == 0 and db_pending == 0:
                     msg += '\U0001f389 No pending requests!'
                 elif telegram_pending == 0 and db_pending > 0:
                     msg += ('\U0001f504 Cleaning up stale DB records...\n'
                             'Some tracked requests may have been approved/declined externally.')
-                    # Clean up stale DB records
                     try:
                         await db.cleanup_stale_pending(chat_id)
                     except Exception:
@@ -470,11 +470,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     msg += '\u2705 All pending requests are tracked!'
 
-                if db_pending > 0:
-                    msg += f'\n\n\U0001f4cb Use the buttons below to manage {db_pending} tracked request(s):'
-
                 buttons = []
-                if db_pending > 0:
+                if telegram_pending > 0:
+                    buttons.append([
+                        InlineKeyboardButton(
+                            f'\u2705 Approve All ({telegram_pending})',
+                            callback_data=f'approve_all_pending:{chat_id}'
+                        ),
+                        InlineKeyboardButton(
+                            f'\u274c Decline All ({telegram_pending})',
+                            callback_data=f'decline_all_pending:{chat_id}'
+                        ),
+                    ])
+                elif db_pending > 0:
                     buttons.append([
                         InlineKeyboardButton(f'\u2705 Approve All ({db_pending})', callback_data=f'batch_approve:{chat_id}'),
                         InlineKeyboardButton(f'\u274c Decline All ({db_pending})', callback_data=f'decline_all:{chat_id}'),
@@ -489,6 +497,107 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f'Error syncing pending: {e}')
                 await query.answer(f'Sync failed: {str(e)[:100]}', show_alert=True)
 
+
+
+        elif data.startswith('approve_all_pending:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel or channel.get('owner_id') != user_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            await query.answer('Approving all pending requests...', show_alert=False)
+            approved = 0
+            failed = 0
+            # First approve all DB-tracked requests
+            db_pending = await db.get_pending_requests(chat_id)
+            for req in db_pending:
+                try:
+                    await context.bot.approve_chat_join_request(chat_id, req['user_id'])
+                    await db.update_request_status(req['user_id'], chat_id, 'approved',
+                                                   dm_sent=False, processed_by='bulk_sync')
+                    approved += 1
+                except Exception as e:
+                    if 'USER_ALREADY_PARTICIPANT' in str(e).upper() or 'HIDE_REQUESTER_MISSING' in str(e).upper():
+                        await db.update_request_status(req['user_id'], chat_id, 'approved',
+                                                       dm_sent=False, processed_by='bulk_sync')
+                        approved += 1
+                    else:
+                        failed += 1
+                        logger.warning(f'Bulk approve failed for {req["user_id"]}: {e}')
+
+            # Check if there are still untracked pending (Telegram count > what we just approved)
+            try:
+                chat_info = await context.bot.get_chat(chat_id)
+                remaining = getattr(chat_info, 'pending_join_request_count', 0) or 0
+            except Exception:
+                remaining = 0
+
+            msg = (f'\u2705 Bulk Approve Complete!\n\n'
+                   f'Approved: {approved}\n')
+            if failed > 0:
+                msg += f'Failed: {failed}\n'
+            if remaining > 0:
+                msg += (f'\n\u26a0\ufe0f {remaining} request(s) still pending.\n'
+                        f'These are old untracked requests. The Telegram Bot API '
+                        f'cannot list individual old requests — only new ones are tracked.\n\n'
+                        f'To approve these remaining requests:\n'
+                        f'Open Telegram → Channel → Recent Actions → Join Requests')
+            else:
+                msg += '\n\U0001f389 All requests processed!'
+
+            buttons = [
+                [InlineKeyboardButton('\U0001f504 Refresh', callback_data=f'sync_pending:{chat_id}'),
+                 InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')],
+            ]
+            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('decline_all_pending:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel or channel.get('owner_id') != user_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            await query.answer('Declining all pending requests...', show_alert=False)
+            declined = 0
+            failed = 0
+            db_pending = await db.get_pending_requests(chat_id)
+            for req in db_pending:
+                try:
+                    await context.bot.decline_chat_join_request(chat_id, req['user_id'])
+                    await db.update_request_status(req['user_id'], chat_id, 'declined',
+                                                   dm_sent=False, processed_by='bulk_sync')
+                    declined += 1
+                except Exception as e:
+                    if 'HIDE_REQUESTER_MISSING' in str(e).upper():
+                        await db.update_request_status(req['user_id'], chat_id, 'declined',
+                                                       dm_sent=False, processed_by='bulk_sync')
+                        declined += 1
+                    else:
+                        failed += 1
+                        logger.warning(f'Bulk decline failed for {req["user_id"]}: {e}')
+
+            try:
+                chat_info = await context.bot.get_chat(chat_id)
+                remaining = getattr(chat_info, 'pending_join_request_count', 0) or 0
+            except Exception:
+                remaining = 0
+
+            msg = (f'\u274c Bulk Decline Complete!\n\n'
+                   f'Declined: {declined}\n')
+            if failed > 0:
+                msg += f'Failed: {failed}\n'
+            if remaining > 0:
+                msg += (f'\n\u26a0\ufe0f {remaining} request(s) still pending.\n'
+                        f'These are old untracked requests.\n'
+                        f'Open Telegram → Channel → Recent Actions → Join Requests to manage them.')
+            else:
+                msg += '\n\U0001f389 All requests processed!'
+
+            buttons = [
+                [InlineKeyboardButton('\U0001f504 Refresh', callback_data=f'sync_pending:{chat_id}'),
+                 InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')],
+            ]
+            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(buttons))
 
         elif data.startswith('batch_approve:'):
             chat_id = int(data.split(':')[1])
