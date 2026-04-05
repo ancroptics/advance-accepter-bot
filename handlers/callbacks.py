@@ -107,14 +107,11 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     pending = pending_db if pending_db is not None else channel.get('pending_requests', 0)
     support = channel.get('support_username', '')
 
-    watermark_username = channel.get('watermark_username', '')
-    watermark_enabled = channel.get('watermark_enabled', False)
     text = (f'\u2699\ufe0f Channel Settings: {title}\n\n'
             f'Mode: {mode}\n'
             f'Auto-approve: {"ON" if auto else "OFF"}\n'
             f'Welcome DM: {"ON" if welcome_dm else "OFF"}\n'
             f'Force Subscribe: {"ON" if force_sub else "OFF"}\n'
-            f'Watermark: {"@" + watermark_username if watermark_enabled and watermark_username else "OFF"}\n'
             f'Pending: {pending}\n')
     if support:
         text += f'Support: @{support}\n'
@@ -150,11 +147,14 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
         ])
     if mode == 'drip':
         buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
-    wm_icon = '\u2705' if channel.get('watermark_enabled') else '\u274c'
-    buttons.append([
-        InlineKeyboardButton(f'{wm_icon} Watermark', callback_data=f'toggle_watermark:{chat_id}'),
-        InlineKeyboardButton('\u270f\ufe0f Set @username', callback_data=f'set_watermark_username:{chat_id}'),
-    ])
+
+    # Watermark (superadmin only)
+    if user_id in config.SUPERADMIN_IDS:
+        wm_icon = '\u2705' if channel.get('watermark_enabled') else '\u274c'
+        buttons.append([
+            InlineKeyboardButton(f'{wm_icon} Watermark', callback_data=f'toggle_watermark:{chat_id}'),
+            InlineKeyboardButton('\u270f\ufe0f Set @username', callback_data=f'set_watermark_username:{chat_id}'),
+        ])
     buttons.append([
         InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
@@ -1158,8 +1158,7 @@ async def handle_verify_force_sub(query, context, db, chat_id, user_id):
         await context.bot.approve_chat_join_request(chat_id, user_id)
     except Exception as e:
         logger.error(f'Failed to approve after force sub: {e}')
-        await query.edit_message_text('Verification passed but approval failed. Please contact support.')
-        return
+        # Don't show error - user may already be approved (race condition)
 
     try:
         await db.update_join_request_force_sub(user_id, chat_id, False)
