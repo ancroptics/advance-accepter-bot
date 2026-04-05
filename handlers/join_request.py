@@ -73,6 +73,60 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
         approve_mode = channel.get('approve_mode', 'instant')
         auto_approve = channel.get('auto_approve', True)
+        force_sub_mode = channel.get('force_sub_mode', 'auto')
+
+        # When force_sub_mode is 'all', check force subscribe BEFORE approve mode logic
+        if force_sub_mode == 'all' and channel.get('force_subscribe_enabled') and channel.get('force_subscribe_channels'):
+            required_channels_raw = channel['force_subscribe_channels']
+            if isinstance(required_channels_raw, str):
+                import json as _json
+                try:
+                    required_channels = _json.loads(required_channels_raw)
+                except (ValueError, TypeError):
+                    required_channels = []
+            elif isinstance(required_channels_raw, list):
+                required_channels = required_channels_raw
+            else:
+                required_channels = []
+            all_joined = True
+            not_joined = []
+            for req_ch in required_channels:
+                try:
+                    member = await context.bot.get_chat_member(req_ch['chat_id'], user_id)
+                    if member.status in ('left', 'kicked'):
+                        all_joined = False
+                        not_joined.append(req_ch)
+                except Exception:
+                    all_joined = False
+                    not_joined.append(req_ch)
+
+            if not all_joined:
+                try:
+                    text = (f'\U0001f44b Welcome! To join {chat.title}, '
+                            f'please join these channels first:\n\n')
+                    buttons = []
+                    for ch in not_joined:
+                        text += f"\u2022 {ch.get('title', 'Channel')}\n"
+                        if ch.get('url'):
+                            buttons.append([InlineKeyboardButton(
+                                f"\U0001f4e2 Join {ch.get('title', '')}",
+                                url=ch['url']
+                            )])
+                    buttons.append([InlineKeyboardButton(
+                        "\u2705 I've Joined \u2014 Verify Me",
+                        callback_data=f'verify_force_sub:{chat_id}'
+                    )])
+                    watermark = await get_watermark(db, chat_id)
+                    text += watermark
+                    await context.bot.send_message(
+                        user_id, text,
+                        reply_markup=InlineKeyboardMarkup(buttons)
+                    )
+                    await db.update_join_request_force_sub(user_id, chat_id, True)
+                except Exception as e:
+                    logger.warning(f'Could not send force sub DM to {user_id}: {e}')
+                    await db.update_join_request_force_sub(user_id, chat_id, True)
+                return
 
         if not auto_approve or approve_mode == 'manual':
             # Notify owner about manual request
@@ -97,7 +151,6 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         # Step 4: Check force subscribe
-        force_sub_mode = channel.get('force_sub_mode', 'auto')
         if channel.get('force_subscribe_enabled') and channel.get('force_subscribe_channels'):
             required_channels_raw = channel['force_subscribe_channels']
             if isinstance(required_channels_raw, str):
