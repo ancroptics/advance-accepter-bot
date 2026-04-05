@@ -1,463 +1,456 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
-from database.models import db, TIER_LIMITS
+from database.models import DatabaseModels
+import config
 
 logger = logging.getLogger(__name__)
 
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main callback query handler - routes to appropriate handler."""
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
     data = query.data
-    user_id = query.from_user.id
-
-    # Route based on callback data prefix
-    if data.startswith('approve_mode:'):
-        await handle_approve_mode(query, data)
-    elif data.startswith('set_drip:'):
-        await handle_drip_settings(query, data)
-    elif data.startswith('toggle_dm:'):
-        await handle_toggle_dm(query, data)
-    elif data.startswith('channel:'):
-        await handle_channel_select(query, data, user_id)
-    elif data.startswith('settings:'):
-        await handle_settings(query, data, user_id)
-    elif data.startswith('batch_select:') or data.startswith('bapprove_') or data.startswith('bdecline_') or data == 'batch_all' or data == 'batch_back':
-        from handlers.batch_approve import batch_button_handler
-        await batch_button_handler(update, context)
-    elif data.startswith('tier:'):
-        await handle_tier_select(query, data)
-    elif data.startswith('admin:'):
-        await handle_admin_action(query, data, user_id, context)
-    elif data.startswith('clone:'):
-        from handlers.clone_bot import clone_callback_handler
-        await clone_callback_handler(update, context)
-    elif data.startswith('export:'):
-        await handle_export(query, data, user_id, context)
-    elif data.startswith('analytics:'):
-        from handlers.analytics_view import analytics_callback_handler
-        await analytics_callback_handler(update, context)
-    elif data.startswith('broadcast:'):
-        from handlers.broadcast import broadcast_callback_handler
-        await broadcast_callback_handler(update, context)
-    elif data.startswith('lang:'):
-        from handlers.language_mgmt import language_callback_handler
-        await language_callback_handler(update, context)
-    elif data.startswith('template:'):
-        from handlers.template_mgmt import template_callback_handler
-        await template_callback_handler(update, context)
-    elif data.startswith('premium:'):
-        from handlers.premium import premium_callback_handler
-        await premium_callback_handler(update, context)
-    elif data == 'my_channels':
-        await show_my_channels(query, user_id)
-    elif data == 'main_menu':
-        await show_main_menu(query, user_id)
+    logger.info(f"Callback received: {data}")
+    
+    if data == 'list_channels':
+        await list_channels(update, context)
     elif data == 'help':
-        await show_help(query)
+        await show_help(update, context)
+    elif data == 'back_main':
+        await back_to_main(update, context)
+    elif data.startswith('ch_'):
+        await channel_menu(update, context, data)
+    elif data.startswith('approve_all_'):
+        await approve_all_pending(update, context, data)
+    elif data.startswith('pending_'):
+        await show_pending_requests(update, context, data)
+    elif data.startswith('set_'):
+        await handle_settings(update, context, data)
+    elif data.startswith('drip_'):
+        await handle_drip(update, context, data)
+    elif data.startswith('batch_'):
+        await handle_batch(update, context, data)
+    elif data.startswith('sync_'):
+        await handle_sync(update, context, data)
+    elif data.startswith('stats_'):
+        await show_channel_stats(update, context, data)
+    elif data.startswith('toggle_'):
+        await handle_toggle(update, context, data)
+    elif data.startswith('remove_'):
+        await handle_remove(update, context, data)
+    elif data.startswith('confirm_remove_'):
+        await confirm_remove(update, context, data)
     else:
-        await query.answer("Unknown action")
+        logger.warning(f"Unknown callback: {data}")
 
 
-async def handle_approve_mode(query, data):
-    """Handle approve mode changes."""
-    parts = data.split(':')
-    if len(parts) < 3:
-        await query.answer("Invalid data")
+async def list_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    user_id = query.from_user.id
+    
+    if user_id not in config.SUPERADMIN_IDS:
+        await query.edit_message_text("\u26d4 You are not authorized.")
         return
-
-    chat_id = int(parts[1])
-    mode = parts[2]
-
-    await db.update_channel(chat_id, approve_mode=mode)
-    await query.answer(f"Mode set to: {mode}")
-
-    # Refresh settings view
-    channel = await db.get_channel(chat_id)
-    if channel:
-        await _show_channel_settings(query, channel)
-
-
-async def handle_drip_settings(query, data):
-    """Handle drip rate/interval changes."""
-    parts = data.split(':')
-    if len(parts) < 4:
-        await query.answer("Invalid data")
-        return
-
-    chat_id = int(parts[1])
-    setting = parts[2]  # 'rate' or 'interval'
-    value = int(parts[3])
-
-    if setting == 'rate':
-        await db.update_channel(chat_id, drip_rate=value)
-        await query.answer(f"Drip rate set to: {value}")
-    elif setting == 'interval':
-        await db.update_channel(chat_id, drip_interval=value)
-        await query.answer(f"Drip interval set to: {value}s")
-
-    channel = await db.get_channel(chat_id)
-    if channel:
-        await _show_channel_settings(query, channel)
-
-
-async def handle_toggle_dm(query, data):
-    """Toggle DM for a channel."""
-    parts = data.split(':')
-    chat_id = int(parts[1])
-
-    channel = await db.get_channel(chat_id)
-    if not channel:
-        await query.answer("Channel not found")
-        return
-
-    new_state = not channel.get('dm_enabled', False)
-    await db.update_channel(chat_id, dm_enabled=new_state)
-    state_text = "enabled" if new_state else "disabled"
-    await query.answer(f"Welcome DM {state_text}")
-
-    channel = await db.get_channel(chat_id)
-    if channel:
-        await _show_channel_settings(query, channel)
-
-
-async def handle_channel_select(query, data, user_id):
-    """Handle channel selection from list."""
-    parts = data.split(':')
-    chat_id = int(parts[1])
-
-    channel = await db.get_channel(chat_id)
-    if not channel:
-        await query.answer("Channel not found")
-        return
-
-    if channel.get('owner_id') != user_id:
-        await query.answer("Not your channel")
-        return
-
-    await _show_channel_settings(query, channel)
-
-
-async def handle_settings(query, data, user_id):
-    """Handle settings sub-menu navigation."""
-    parts = data.split(':')
-    action = parts[1]
-    chat_id = int(parts[2]) if len(parts) > 2 else None
-
-    if action == 'mode' and chat_id:
-        await _show_mode_options(query, chat_id)
-    elif action == 'drip' and chat_id:
-        await _show_drip_options(query, chat_id)
-    elif action == 'dm' and chat_id:
-        await _show_dm_settings(query, chat_id)
-    elif action == 'back' and chat_id:
-        channel = await db.get_channel(chat_id)
-        if channel:
-            await _show_channel_settings(query, channel)
-
-
-async def handle_tier_select(query, data):
-    """Handle tier selection (admin only)."""
-    parts = data.split(':')
-    user_id = int(parts[1])
-    tier = parts[2]
-
-    await db.set_user_tier(user_id, tier)
-    await query.answer(f"Tier set to: {tier}")
-    await query.edit_message_text(f"\u2705 User {user_id} tier updated to <b>{tier}</b>", parse_mode='HTML')
-
-
-async def handle_admin_action(query, data, user_id, context):
-    """Handle admin panel actions."""
-    import os
-    ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()]
-    if user_id not in ADMIN_IDS:
-        await query.answer("Not authorized")
-        return
-
-    parts = data.split(':')
-    action = parts[1]
-
-    if action == 'stats':
-        stats = await db.get_global_stats()
-        text = (
-            "<b>\U0001f4ca Global Statistics</b>\n\n"
-            f"\U0001f465 Users: <b>{stats['total_users']}</b>\n"
-            f"\U0001f4e2 Channels: <b>{stats['total_channels']}</b>\n"
-            f"\U0001f4e8 Total requests: <b>{stats['total_requests']}</b>\n"
-            f"\u2705 Approved: <b>{stats['total_approved']}</b>\n"
-            f"\u23f3 Pending: <b>{stats['total_pending']}</b>\n"
-            f"\U0001f4c5 Today approved: <b>{stats['today_approved']}</b>"
-        )
-        await query.edit_message_text(text, parse_mode='HTML')
-
-    elif action == 'users':
-        users = await db.get_all_users(limit=20)
-        if not users:
-            await query.edit_message_text("No users found.")
-            return
-
-        text = "<b>\U0001f465 Recent Users</b>\n\n"
-        for u in users:
-            tier_emoji = {'free': '\U0001f7e2', 'pro': '\U0001f535', 'enterprise': '\U0001f7e1'}.get(u.get('tier', 'free'), '\u26aa')
-            text += f"{tier_emoji} <code>{u['user_id']}</code> - {u.get('username', 'N/A')} ({u.get('tier', 'free')})\n"
-
-        await query.edit_message_text(text, parse_mode='HTML')
-
-    elif action == 'broadcast':
-        from handlers.broadcast import start_broadcast
-        await start_broadcast(query, context)
-
-
-async def handle_export(query, data, user_id, context):
-    """Handle data export requests."""
-    parts = data.split(':')
-    chat_id = int(parts[1])
-
-    # Check tier
-    user = await db.get_user(user_id)
-    tier = user.get('tier', 'free') if user else 'free'
-    limits = TIER_LIMITS.get(tier, TIER_LIMITS['free'])
-
-    if not limits.get('export'):
-        await query.answer("Export requires Pro tier!", show_alert=True)
-        return
-
-    csv_data = await db.export_requests_csv(chat_id)
-    if not csv_data:
-        await query.answer("No data to export")
-        return
-
-    import io
-    file = io.BytesIO(csv_data.encode())
-    file.name = f"requests_{chat_id}.csv"
-
-    await context.bot.send_document(
-        chat_id=query.from_user.id,
-        document=file,
-        caption=f"\U0001f4e4 Export for channel {chat_id}"
-    )
-    await query.answer("Export sent!")
-
-
-async def show_my_channels(query, user_id):
-    """Show user's channels list."""
-    channels = await db.get_user_channels(user_id)
-
+    
+    channels = await db.get_all_channels()
     if not channels:
+        keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data='back_main')]]
         await query.edit_message_text(
-            "You haven't added any channels yet.\nAdd me as admin to your channel and I'll detect it automatically!"
+            "\ud83d\udcad No channels registered yet.\n\nAdd me as admin to a channel and I'll detect it automatically.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
-
-    text = "<b>\U0001f4e2 Your Channels</b>\n\n"
+    
     keyboard = []
-
     for ch in channels:
-        title = ch.get('chat_title', 'Unknown')
-        mode = ch.get('approve_mode', 'instant')
-        pending = ch.get('pending_requests', 0)
-        approved = ch.get('total_approved', 0)
-        mode_emoji = {'instant': '\u26a1', 'drip': '\U0001f4a7', 'manual': '\u270b'}.get(mode, '\u2753')
-
-        text += f"{mode_emoji} <b>{title}</b>\n"
-        text += f"   Pending: {pending} | Approved: {approved}\n\n"
-
+        status = "\u2705" if ch.get('auto_approve') else "\u23f8\ufe0f"
+        pending = ch.get('pending_count', 0)
+        pending_text = f" ({pending} pending)" if pending else ""
+        title = ch.get('title', f"Chat {ch['chat_id']}")
         keyboard.append([InlineKeyboardButton(
-            f"\u2699\ufe0f {title}", callback_data=f"channel:{ch['chat_id']}"
+            f"{status} {title}{pending_text}",
+            callback_data=f"ch_{ch['chat_id']}"
         )])
-
-    keyboard.append([InlineKeyboardButton("\u2b05 Back", callback_data="main_menu")])
-
+    keyboard.append([InlineKeyboardButton("\u00ab Back", callback_data='back_main')])
+    
     await query.edit_message_text(
-        text,
+        "\ud83d\udcfa **Your Channels:**\n\nSelect a channel to manage:",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='HTML'
+        parse_mode='Markdown'
     )
 
 
-async def show_main_menu(query, user_id):
-    """Show main menu."""
-    user = await db.get_user(user_id)
-    tier = user.get('tier', 'free') if user else 'free'
-    tier_emoji = {'free': '\U0001f7e2 Free', 'pro': '\U0001f535 Pro', 'enterprise': '\U0001f7e1 Enterprise'}.get(tier, 'Free')
-
-    text = (
-        f"<b>\U0001f916 Advance Accepter Bot</b>\n\n"
-        f"Tier: <b>{tier_emoji}</b>\n\n"
-        f"Manage your channels and auto-approve settings."
-    )
-
-    keyboard = [
-        [InlineKeyboardButton("\U0001f4e2 My Channels", callback_data="my_channels")],
-        [InlineKeyboardButton("\U0001f4cb Batch Approve", callback_data="batch_back")],
-        [InlineKeyboardButton("\U0001f4ca Analytics", callback_data="analytics:overview")],
-        [InlineKeyboardButton("\U0001f4e3 Broadcast", callback_data="broadcast:start")],
-        [InlineKeyboardButton("\u2753 Help", callback_data="help")],
-    ]
-
-    import os
-    ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()]
-    if user_id in ADMIN_IDS:
-        keyboard.append([InlineKeyboardButton("\U0001f6e0 Admin Panel", callback_data="admin:panel")])
-
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='HTML'
-    )
-
-
-async def show_help(query):
-    """Show help message."""
-    text = (
-        "<b>\u2753 Help & Commands</b>\n\n"
-        "<b>Basic Commands:</b>\n"
-        "/start - Start bot & main menu\n"
-        "/help - Show this help\n"
-        "/batch - Batch approve panel\n"
-        "/stats - Your statistics\n"
-        "/settings - Channel settings\n\n"
-        "<b>How it works:</b>\n"
-        "1. Add me as admin to your channel\n"
-        "2. I'll auto-detect the channel\n"
-        "3. Set your preferred approve mode\n"
-        "4. I'll handle join requests automatically!\n\n"
-        "<b>Approve Modes:</b>\n"
-        "\u26a1 Instant - Approve immediately\n"
-        "\U0001f4a7 Drip - Approve in batches over time\n"
-        "\u270b Manual - Queue for manual review\n\n"
-        "<b>Pro Features:</b>\n"
-        "\u2022 Welcome DM messages\n"
-        "\u2022 Broadcast to members\n"
-        "\u2022 Analytics & export\n"
-        "\u2022 Clone settings across channels"
-    )
-
-    keyboard = [[InlineKeyboardButton("\u2b05 Back", callback_data="main_menu")]]
-
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='HTML'
-    )
-
-
-async def _show_channel_settings(query, channel):
-    """Show settings for a specific channel."""
-    chat_id = channel['chat_id']
-    title = channel.get('chat_title', 'Unknown')
-    mode = channel.get('approve_mode', 'instant')
-    drip_rate = channel.get('drip_rate', 50)
-    drip_interval = channel.get('drip_interval', 30)
-    dm_enabled = channel.get('dm_enabled', False)
-    pending = channel.get('pending_requests', 0)
+async def channel_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    chat_id = int(data.replace('ch_', ''))
+    channel = await db.get_channel(chat_id)
+    
+    if not channel:
+        await query.edit_message_text("Channel not found.")
+        return
+    
+    title = channel.get('title', f"Chat {chat_id}")
+    auto_approve = channel.get('auto_approve', False)
+    pending_count = channel.get('pending_count', 0)
     total_approved = channel.get('total_approved', 0)
-    total_declined = channel.get('total_declined', 0)
-
-    mode_emoji = {'instant': '\u26a1', 'drip': '\U0001f4a7', 'manual': '\u270b'}.get(mode, '\u2753')
-    dm_status = '\u2705 ON' if dm_enabled else '\u274c OFF'
-
+    drip_enabled = channel.get('drip_enabled', False)
+    
+    status_emoji = "\u2705 Active" if auto_approve else "\u23f8\ufe0f Paused"
+    drip_status = "\ud83d\udca7 Drip ON" if drip_enabled else "\ud83d\udca7 Drip OFF"
+    
     text = (
-        f"<b>\u2699\ufe0f {title}</b>\n\n"
-        f"{mode_emoji} Mode: <b>{mode}</b>\n"
-        f"\U0001f4a7 Drip: {drip_rate} per {drip_interval}s\n"
-        f"\U0001f4e8 DM: {dm_status}\n\n"
-        f"<b>Stats:</b>\n"
-        f"\u23f3 Pending: {pending}\n"
-        f"\u2705 Approved: {total_approved}\n"
-        f"\u274c Declined: {total_declined}"
+        f"\ud83d\udcfa **{title}**\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"Status: {status_emoji}\n"
+        f"Pending: {pending_count} requests\n"
+        f"Total Approved: {total_approved}\n"
+        f"Drip Mode: {drip_status}\n"
+    )
+    
+    keyboard = []
+    
+    toggle_text = "\u23f8\ufe0f Pause Auto-Approve" if auto_approve else "\u25b6\ufe0f Enable Auto-Approve"
+    keyboard.append([InlineKeyboardButton(toggle_text, callback_data=f"toggle_{chat_id}")])
+    
+    if pending_count > 0:
+        keyboard.append([InlineKeyboardButton(f"\u2705 Approve All ({pending_count})", callback_data=f"approve_all_{chat_id}")])
+        keyboard.append([InlineKeyboardButton(f"\ud83d\udcdd View Pending", callback_data=f"pending_{chat_id}")])
+    
+    keyboard.append([InlineKeyboardButton(f"\ud83d\udca7 Drip Settings", callback_data=f"drip_{chat_id}")])
+    keyboard.append([InlineKeyboardButton(f"\u2699\ufe0f Settings", callback_data=f"set_{chat_id}")])
+    keyboard.append([InlineKeyboardButton(f"\ud83d\udcca Stats", callback_data=f"stats_{chat_id}")])
+    keyboard.append([InlineKeyboardButton(f"\ud83d\udd04 Sync Pending", callback_data=f"sync_{chat_id}")])
+    keyboard.append([InlineKeyboardButton(f"\ud83d\uddd1 Remove", callback_data=f"remove_{chat_id}")])
+    keyboard.append([InlineKeyboardButton("\u00ab Back to Channels", callback_data='list_channels')])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
     )
 
-    keyboard = [
-        [InlineKeyboardButton(f"{mode_emoji} Approve Mode", callback_data=f"settings:mode:{chat_id}")],
-        [InlineKeyboardButton("\U0001f4a7 Drip Settings", callback_data=f"settings:drip:{chat_id}")],
-        [InlineKeyboardButton(f"\U0001f4e8 Welcome DM ({dm_status})", callback_data=f"toggle_dm:{chat_id}")],
-        [InlineKeyboardButton("\U0001f4ca Analytics", callback_data=f"analytics:channel:{chat_id}")],
-        [InlineKeyboardButton("\U0001f4e4 Export Data", callback_data=f"export:{chat_id}")],
-        [InlineKeyboardButton("\U0001f4cb Batch Approve", callback_data=f"batch_select:{chat_id}")],
-        [InlineKeyboardButton("\u2b05 Back", callback_data="my_channels")],
-    ]
 
-    try:
+async def show_pending_requests(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    chat_id = int(data.replace('pending_', ''))
+    
+    pending = await db.get_pending_requests(chat_id, limit=20)
+    channel = await db.get_channel(chat_id)
+    title = channel.get('title', f"Chat {chat_id}") if channel else f"Chat {chat_id}"
+    
+    if not pending:
+        keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
         await query.edit_message_text(
-            text,
+            f"\u2705 No pending requests for **{title}**",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='HTML'
+            parse_mode='Markdown'
         )
-    except Exception:
-        pass
-
-
-async def _show_mode_options(query, chat_id):
-    """Show approve mode selection."""
-    text = "<b>Select Approve Mode:</b>"
+        return
+    
+    text = f"\ud83d\udcdd **Pending Requests for {title}:**\n\n"
+    for i, req in enumerate(pending, 1):
+        user_name = req.get('user_name', 'Unknown')
+        user_id = req.get('user_id', '?')
+        requested_at = req.get('requested_at', '?')
+        text += f"{i}. {user_name} (ID: `{user_id}`) - {requested_at}\n"
+    
+    total_pending = channel.get('pending_count', len(pending))
+    if total_pending > 20:
+        text += f"\n_...and {total_pending - 20} more_\n"
+    
     keyboard = [
-        [InlineKeyboardButton("\u26a1 Instant", callback_data=f"approve_mode:{chat_id}:instant")],
-        [InlineKeyboardButton("\U0001f4a7 Drip Feed", callback_data=f"approve_mode:{chat_id}:drip")],
-        [InlineKeyboardButton("\u270b Manual", callback_data=f"approve_mode:{chat_id}:manual")],
-        [InlineKeyboardButton("\u2b05 Back", callback_data=f"settings:back:{chat_id}")],
+        [InlineKeyboardButton(f"\u2705 Approve All ({total_pending})", callback_data=f"approve_all_{chat_id}")],
+        [InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]
     ]
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-
-
-async def _show_drip_options(query, chat_id):
-    """Show drip rate and interval options."""
-    channel = await db.get_channel(chat_id)
-    current_rate = channel.get('drip_rate', 50) if channel else 50
-    current_interval = channel.get('drip_interval', 30) if channel else 30
-
-    text = (
-        f"<b>\U0001f4a7 Drip Settings</b>\n\n"
-        f"Current: <b>{current_rate}</b> approvals every <b>{current_interval}s</b>\n\n"
-        f"Set batch size:"
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
     )
 
-    keyboard = [
-        [
-            InlineKeyboardButton("10", callback_data=f"set_drip:{chat_id}:rate:10"),
-            InlineKeyboardButton("25", callback_data=f"set_drip:{chat_id}:rate:25"),
-            InlineKeyboardButton("50", callback_data=f"set_drip:{chat_id}:rate:50"),
-            InlineKeyboardButton("100", callback_data=f"set_drip:{chat_id}:rate:100"),
-        ],
-        [InlineKeyboardButton("\u23f1 Interval:", callback_data="noop")],
-        [
-            InlineKeyboardButton("15s", callback_data=f"set_drip:{chat_id}:interval:15"),
-            InlineKeyboardButton("30s", callback_data=f"set_drip:{chat_id}:interval:30"),
-            InlineKeyboardButton("60s", callback_data=f"set_drip:{chat_id}:interval:60"),
-            InlineKeyboardButton("120s", callback_data=f"set_drip:{chat_id}:interval:120"),
-        ],
-        [InlineKeyboardButton("\u2b05 Back", callback_data=f"settings:back:{chat_id}")],
-    ]
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
-
-async def _show_dm_settings(query, chat_id):
-    """Show DM template settings."""
+async def approve_all_pending(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    chat_id = int(data.replace('approve_all_', ''))
     channel = await db.get_channel(chat_id)
-    dm_enabled = channel.get('dm_enabled', False) if channel else False
-    template = channel.get('dm_template', '') if channel else ''
-
-    status = '\u2705 Enabled' if dm_enabled else '\u274c Disabled'
-    template_preview = template[:100] + '...' if len(template) > 100 else (template or 'Not set')
-
-    text = (
-        f"<b>\U0001f4e8 Welcome DM Settings</b>\n\n"
-        f"Status: {status}\n"
-        f"Template: <code>{template_preview}</code>\n\n"
-        f"Use /setdm {{channel_id}} {{message}} to set template"
+    title = channel.get('title', f"Chat {chat_id}") if channel else f"Chat {chat_id}"
+    
+    pending = await db.get_pending_requests(chat_id)
+    if not pending:
+        keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+        await query.edit_message_text(
+            f"\u2705 No pending requests for **{title}**",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+    
+    await query.edit_message_text(f"\u23f3 Approving {len(pending)} requests for **{title}**...\nThis may take a moment.", parse_mode='Markdown')
+    
+    approved = 0
+    failed = 0
+    for req in pending:
+        try:
+            await context.bot.approve_chat_join_request(
+                chat_id=chat_id,
+                user_id=req['user_id']
+            )
+            await db.update_request_status(req['id'], 'approved')
+            approved += 1
+        except BadRequest as e:
+            logger.warning(f"Failed to approve {req['user_id']}: {e}")
+            await db.update_request_status(req['id'], 'failed', error=str(e))
+            failed += 1
+        except Exception as e:
+            logger.error(f"Error approving {req['user_id']}: {e}")
+            failed += 1
+    
+    await db.update_channel_stats(chat_id, approved=approved)
+    
+    result_text = f"\u2705 **Approval Complete for {title}**\n\n"
+    result_text += f"Approved: {approved}\n"
+    if failed:
+        result_text += f"Failed: {failed}\n"
+    
+    keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+    await query.edit_message_text(
+        result_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
     )
 
-    keyboard = [
-        [InlineKeyboardButton(
-            f"{'\u274c Disable' if dm_enabled else '\u2705 Enable'} DM",
-            callback_data=f"toggle_dm:{chat_id}"
-        )],
-        [InlineKeyboardButton("\u2b05 Back", callback_data=f"settings:back:{chat_id}")],
-    ]
 
+async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    from handlers.channel_settings import show_channel_settings
+    chat_id = int(data.replace('set_', ''))
+    await show_channel_settings(update, context, chat_id, edit=True)
+
+
+async def handle_drip(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    from handlers.batch_approve import show_drip_menu
+    chat_id = int(data.replace('drip_', ''))
+    await show_drip_menu(update, context, chat_id)
+
+
+async def handle_batch(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    from handlers.batch_approve import handle_batch_callback
+    await handle_batch_callback(update, context, data)
+
+
+async def handle_sync(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    chat_id = int(data.replace('sync_', ''))
+    channel = await db.get_channel(chat_id)
+    title = channel.get('title', f"Chat {chat_id}") if channel else f"Chat {chat_id}"
+    
+    await query.edit_message_text(f"\ud83d\udd04 Syncing pending requests for **{title}**...\nThis uses Telethon to fetch pending members.", parse_mode='Markdown')
+    
     try:
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-    except Exception:
-        pass
+        telethon_client = context.application.bot_data.get('telethon_client')
+        if not telethon_client:
+            keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+            await query.edit_message_text(
+                "\u26a0\ufe0f Telethon client not configured. Cannot sync.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        
+        pending_users = await telethon_client.get_pending_join_requests(chat_id)
+        
+        if pending_users is None:
+            keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+            await query.edit_message_text(
+                "\u26a0\ufe0f Failed to fetch pending requests. Check bot permissions.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        
+        existing_ids = await db.get_pending_request_user_ids(chat_id)
+        new_count = 0
+        for user in pending_users:
+            if user['user_id'] not in existing_ids:
+                await db.save_pending_request(
+                    chat_id=chat_id,
+                    user_id=user['user_id'],
+                    user_name=user.get('first_name', 'Unknown'),
+                    requested_at=user.get('date')
+                )
+                new_count += 1
+        
+        await db.update_pending_count(chat_id)
+        updated_channel = await db.get_channel(chat_id)
+        total = updated_channel.get('pending_count', 0)
+        
+        keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+        await query.edit_message_text(
+            f"\u2705 **Sync Complete for {title}**\n\n"
+            f"New requests found: {new_count}\n"
+            f"Total pending: {total}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Sync error for {chat_id}: {e}")
+        keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+        await query.edit_message_text(
+            f"\u274c Sync failed: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
+async def show_channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    chat_id = int(data.replace('stats_', ''))
+    channel = await db.get_channel(chat_id)
+    
+    if not channel:
+        await query.edit_message_text("Channel not found.")
+        return
+    
+    title = channel.get('title', f"Chat {chat_id}")
+    stats = await db.get_channel_stats(chat_id)
+    
+    text = (
+        f"\ud83d\udcca **Stats for {title}**\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"Total Approved: {stats.get('total_approved', 0)}\n"
+        f"Total Declined: {stats.get('total_declined', 0)}\n"
+        f"Pending: {stats.get('pending_count', 0)}\n"
+        f"Today Approved: {stats.get('today_approved', 0)}\n"
+        f"Today Declined: {stats.get('today_declined', 0)}\n"
+        f"\n"
+        f"Auto-Approve: {'\u2705 ON' if channel.get('auto_approve') else '\u274c OFF'}\n"
+        f"Drip Mode: {'\u2705 ON' if channel.get('drip_enabled') else '\u274c OFF'}\n"
+    )
+    
+    keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data=f"ch_{chat_id}")]]
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def handle_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    chat_id = int(data.replace('toggle_', ''))
+    channel = await db.get_channel(chat_id)
+    
+    if not channel:
+        await query.edit_message_text("Channel not found.")
+        return
+    
+    new_state = not channel.get('auto_approve', False)
+    await db.update_channel(chat_id, auto_approve=new_state)
+    
+    status = "\u2705 enabled" if new_state else "\u23f8\ufe0f paused"
+    await query.answer(f"Auto-approve {status}")
+    
+    await channel_menu(update, context, f"ch_{chat_id}")
+
+
+async def handle_remove(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    chat_id = int(data.replace('remove_', ''))
+    db = context.application.bot_data.get('db')
+    channel = await db.get_channel(chat_id)
+    title = channel.get('title', f"Chat {chat_id}") if channel else f"Chat {chat_id}"
+    
+    keyboard = [
+        [InlineKeyboardButton("\u2705 Yes, Remove", callback_data=f"confirm_remove_{chat_id}")],
+        [InlineKeyboardButton("\u274c Cancel", callback_data=f"ch_{chat_id}")]
+    ]
+    
+    await query.edit_message_text(
+        f"\u26a0\ufe0f **Remove {title}?**\n\nThis will stop tracking this channel and delete all pending requests.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def confirm_remove(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    query = update.callback_query
+    chat_id = int(data.replace('confirm_remove_', ''))
+    db = context.application.bot_data.get('db')
+    channel = await db.get_channel(chat_id)
+    title = channel.get('title', f"Chat {chat_id}") if channel else f"Chat {chat_id}"
+    
+    await db.remove_channel(chat_id)
+    
+    keyboard = [[InlineKeyboardButton("\u00ab Back to Channels", callback_data='list_channels')]]
+    await query.edit_message_text(
+        f"\u2705 **{title}** has been removed.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    
+    help_text = (
+        "\ud83d\udcd6 **Help & Commands**\n"
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+        "**Getting Started:**\n"
+        "1. Add this bot as admin to your channel\n"
+        "2. The bot will auto-detect the channel\n"
+        "3. Use /start to manage your channels\n\n"
+        "**Commands:**\n"
+        "/start - Main menu\n"
+        "/help - This help message\n"
+        "/channels - List your channels\n"
+        "/stats - Quick stats overview\n\n"
+        "**Features:**\n"
+        "\u2022 \u2705 Auto-approve join requests\n"
+        "\u2022 \ud83d\udca7 Drip mode (gradual approvals)\n"
+        "\u2022 \ud83d\udcca Channel statistics\n"
+        "\u2022 \ud83d\udd04 Sync pending requests via Telethon\n"
+        "\u2022 \ud83d\udee1\ufe0f Superadmin controls\n\n"
+        "**Tips:**\n"
+        "\u2022 Enable auto-approve to handle requests automatically\n"
+        "\u2022 Use drip mode to avoid Telegram rate limits\n"
+        "\u2022 Sync periodically to catch requests made while bot was offline\n"
+    )
+    
+    keyboard = [[InlineKeyboardButton("\u00ab Back", callback_data='back_main')]]
+    await query.edit_message_text(
+        help_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    
+    channels = await db.get_all_channels()
+    total_channels = len(channels) if channels else 0
+    total_pending = sum(ch.get('pending_count', 0) for ch in channels) if channels else 0
+    
+    text = (
+        f"\ud83c\udf1f **Telegram Growth Engine**\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"Channels: {total_channels}\n"
+        f"Pending Requests: {total_pending}\n"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("\ud83d\udcfa My Channels", callback_data='list_channels')],
+        [InlineKeyboardButton("\u2753 Help", callback_data='help')]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
