@@ -29,24 +29,9 @@ async def show_force_sub_menu(update, context, chat_id):
     else:
         text += 'None configured\n'
     text += f'\nTimeout: {timeout} hours\n(Auto-approve after timeout even if not joined)'
-    # FIX 3: Show active force sub modes
-    force_modes = channel.get('force_sub_modes', 'instant')
-    mode_labels = {'instant': 'Instant', 'manual': 'Manual', 'drip': 'Drip', 'all': 'All Modes'}
-    current_mode_label = mode_labels.get(force_modes, force_modes)
-    text += f'\nActive for: {current_mode_label} mode'
-
     toggle_text = '\U0001f534 Disable' if enabled else '\U0001f7e2 Enable'
-
-    # Mode selection buttons
-    mode_buttons = []
-    for mode_key, mode_name in [('instant', '\u26a1 Instant'), ('manual', '\U0001f590 Manual'), ('drip', '\U0001f4a7 Drip'), ('all', '\U0001f310 All')]:
-        check = ' \u2705' if force_modes == mode_key else ''
-        mode_buttons.append(InlineKeyboardButton(f'{mode_name}{check}', callback_data=f'force_sub_mode:{chat_id}:{mode_key}'))
-
     buttons = [
         [InlineKeyboardButton(toggle_text, callback_data=f'toggle_force_sub:{chat_id}')],
-        mode_buttons[:2],
-        mode_buttons[2:],
         [InlineKeyboardButton('\u2795 Add Channel', callback_data=f'add_force_sub_ch:{chat_id}')],
         [InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')]
     ]
@@ -213,8 +198,3 @@ async def start_add_force_sub_channel(update, context, chat_id):
         'Send /cancel to abort.'
     )
     return FORCE_SUB_INPUT
-
-
-async def force_sub_settings(update, context, chat_id):
-    """Called after mode change to refresh the menu."""
-    await force_sub_menu(update, context, chat_id)
