@@ -97,6 +97,7 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         # Step 4: Check force subscribe
+        force_sub_mode = channel.get('force_sub_mode', 'auto')
         if channel.get('force_subscribe_enabled') and channel.get('force_subscribe_channels'):
             required_channels_raw = channel['force_subscribe_channels']
             if isinstance(required_channels_raw, str):
