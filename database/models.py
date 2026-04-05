@@ -19,20 +19,10 @@ class DatabaseModels:
             with open(MIGRATION_SQL_PATH, 'r') as f:
                 sql = f.read()
             await self.db.run_migration(sql)
-            # Run additional migrations
-            migration_002 = os.path.join(os.path.dirname(__file__), 'migrations', '002_fixes.sql')
-            if os.path.exists(migration_002):
-                with open(migration_002, 'r') as f:
-                    sql2 = f.read()
-                await self.db.run_migration(sql2)
             logger.info('Migrations complete')
         except Exception as e:
             logger.exception(f'Migration error: {e}')
             raise
-
-    async def create_tables(self):
-        """Alias for run_migrations."""
-        await self.run_migrations()
 
     async def upsert_owner(self, user_id, username=None, first_name=None, last_name=None):
         return await self.db.execute("""
@@ -127,14 +117,12 @@ class DatabaseModels:
     async def update_channel_setting(self, chat_id, key, value):
         allowed = {
             'auto_approve', 'approve_mode', 'drip_rate', 'drip_interval',
-            'drip_speed', 'drip_quantity',
             'welcome_dm_enabled', 'welcome_message', 'welcome_media_type', 'welcome_media_file_id',
             'welcome_buttons_json', 'welcome_parse_mode', 'welcome_messages_i18n',
             'force_subscribe_enabled', 'force_subscribe_channels',
             'cross_promo_enabled', 'cross_promo_category', 'cross_promo_text',
             'watermark_enabled', 'member_count', 'is_active', 'bot_is_admin',
             'pending_requests',
-            'force_sub_modes',
         }
         if key not in allowed:
             logger.warning(f'Attempted to update disallowed channel setting: {key}')
@@ -165,6 +153,13 @@ class DatabaseModels:
         val = await self.db.fetchval(
             "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id)
         return val or 0
+    async def cleanup_stale_pending(self, chat_id):
+        """Mark stale pending requests as expired (when Telegram shows 0 pending but DB has records)."""
+        await self.db.execute(
+            "UPDATE join_requests SET status = 'expired' WHERE chat_id = $1 AND status = 'pending'",
+            chat_id
+        )
+
 
     async def get_pending_requests(self, chat_id, limit=100):
         return await self.db.fetch("""
@@ -294,24 +289,6 @@ class DatabaseModels:
         """, event_type, owner_id, channel_id, user_id, json.dumps(data) if data else None)
 
     async def get_channel_analytics(self, chat_id, days=30):
-        """Return a summary dict with analytics for a channel."""
-        result = {}
-        result['total_requests'] = await self.db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1", chat_id) or 0
-        result['approved'] = await self.db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'approved'", chat_id) or 0
-        result['pending'] = await self.db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id) or 0
-        result['declined'] = await self.db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'declined'", chat_id) or 0
-        result['today'] = await self.db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND request_time::date = CURRENT_DATE", chat_id) or 0
-        result['this_week'] = await self.db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND request_time >= CURRENT_DATE - INTERVAL '7 days'", chat_id) or 0
-        return result
-
-    async def get_channel_analytics_timeseries(self, chat_id, days=30):
-        """Return raw timeseries data for charts."""
         since = date.today() - timedelta(days=days)
         return await self.db.fetch("""
             SELECT DATE(created_at) as day, event_type, COUNT(*) as cnt
@@ -359,45 +336,19 @@ class DatabaseModels:
         return await self.db.execute(
             "UPDATE channel_owners SET tier = 'free' WHERE user_id = $1", user_id)
 
-    async def get_drip_channels(self):
-        """Get all channels with drip mode enabled and pending requests."""
-        return await self.db.fetch("""
-            SELECT mc.*, (SELECT COUNT(*) FROM join_requests jr WHERE jr.chat_id = mc.chat_id AND jr.status = 'pending') as actual_pending
-            FROM managed_channels mc
-            WHERE mc.approve_mode = 'drip' AND mc.is_active = TRUE
-        """)
-
-    async def get_drip_batch(self, chat_id, limit):
-        """Get a batch of pending requests for drip approval."""
-        return await self.db.fetch("""
-            SELECT * FROM join_requests
-            WHERE chat_id = $1 AND status = 'pending'
-            ORDER BY request_time ASC
-            LIMIT $2
-        """, chat_id, limit)
-
-
-    # ===== FIX 2: Fetch all active channels for startup scan =====
-    async def fetch_all_active_channels(self):
+    async def get_expired_force_sub_requests(self, hours=24):
+        """Get pending join requests where force sub was required but time has expired."""
         return await self.db.fetch(
-            "SELECT * FROM managed_channels WHERE is_active = TRUE"
-        )
+            """SELECT * FROM join_requests 
+            WHERE status = 'pending' 
+            AND force_sub_required = TRUE 
+            AND force_sub_completed = FALSE
+            AND request_time < NOW() - INTERVAL '1 hour' * $1
+            ORDER BY request_time
+            LIMIT 200""", hours)
 
-    # ===== FIX 5: Platform settings for global watermark =====
-    async def get_platform_setting(self, key, default=''):
-        """Get a platform-wide setting."""
-        try:
-            row = await self.db.fetchrow(
-                "SELECT value FROM platform_settings WHERE key = $1", key
-            )
-            return row['value'] if row else default
-        except Exception:
-            return default
+    async def get_all_active_channels(self):
+        """Get all active channels."""
+        return await self.db.fetch(
+            "SELECT * FROM managed_channels WHERE is_active = TRUE AND bot_is_admin = TRUE")
 
-    async def set_platform_setting(self, key, value):
-        """Set a platform-wide setting."""
-        await self.db.execute("""
-            INSERT INTO platform_settings (key, value, updated_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-        """, key, str(value))
