@@ -1,12 +1,12 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 import config
-from utils.decorators import superadmin_only
 
 logger = logging.getLogger(__name__)
 
-async def dashboard_handler(update, context):
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_dashboard(update, context, edit=False)
 
 async def show_dashboard(update, context, edit=False):
@@ -59,7 +59,8 @@ async def show_dashboard(update, context, edit=False):
     row5.append(InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info'))
     buttons.append(row5)
     buttons.extend([
-        [InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
+        [InlineKeyboardButton('\U0001f4ac Support', callback_data='edit_support_overview'),
+         InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
          InlineKeyboardButton('\u2753 Help', callback_data='help')],
     ])
     # Add superadmin button for superadmins
@@ -68,141 +69,13 @@ async def show_dashboard(update, context, edit=False):
 
     total_channels = await db.get_total_channel_count()
     text += f'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\U0001f4ca Platform: {total_channels} channels using Growth Engine'
-    kb = InlineKeyboardMarkup(buttons)
+
+    reply_markup = InlineKeyboardMarkup(buttons)
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=kb)
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+        except Exception as e:
+            if 'message is not modified' not in str(e).lower():
+                raise
     else:
-        await update.effective_message.reply_text(text, reply_markup=kb)
-
-async def channels_handler(update, context):
-    await show_dashboard(update, context, edit=False)
-
-@superadmin_only
-async def superadmin_handler(update, context):
-    db = context.application.bot_data.get('db')
-    stats = await db.get_platform_stats()
-    text = ('\U0001f451 SUPERADMIN PANEL\n\n'
-            f'\U0001f465 Channel Owners: {stats.get("total_owners", 0)}\n'
-            f'\U0001f4e2 Total Channels: {stats.get("total_channels", 0)}\n'
-            f'\U0001f9ec Active Clones: {stats.get("active_clones", 0)}\n'
-            f'\U0001f464 End Users: {stats.get("total_users", 0)}\n'
-            f'\U0001f48e Premium: {stats.get("premium_owners", 0)}\n')
-    buttons = [
-        [InlineKeyboardButton('\U0001f4ca Full Analytics', callback_data='sa_analytics')],
-        [InlineKeyboardButton('\U0001f465 Manage Owners', callback_data='sa_manage_owners')],
-        [InlineKeyboardButton('\U0001f4e2 Manage Channels', callback_data='sa_manage_channels')],
-        [InlineKeyboardButton('\U0001f9ec Manage Clones', callback_data='sa_manage_clones')],
-        [InlineKeyboardButton('\U0001f4e2 Platform Broadcast', callback_data='sa_platform_broadcast')],
-        [InlineKeyboardButton('\U0001f48e Manage Subs', callback_data='sa_manage_subs')],
-        [InlineKeyboardButton('\U0001f527 System Health', callback_data='sa_system_health')],
-        [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
-        [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
-        [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
-    ]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-async def sa_full_analytics(update, context):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    stats = await db.get_platform_stats()
-    await query.edit_message_text(f'Full analytics: {stats}',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
-
-async def sa_manage_owners(update, context):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    owners = await db.get_all_owners(limit=20)
-    text = '\U0001f465 Channel Owners:\n\n'
-    for o in (owners or []):
-        text += f"ID: {o['user_id']} | @{o.get('username', 'N/A')} | {o.get('tier', 'free')}\n"
-    await query.edit_message_text(text or 'No owners.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
-
-async def sa_manage_channels(update, context):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    channels = await db.get_all_channels(limit=20)
-    text = '\U0001f4e2 All Channels:\n\n'
-    for ch in (channels or []):
-        text += f"{ch['chat_title']} | Owner: {ch['owner_id']} | Active: {ch.get('is_active')}\n"
-    await query.edit_message_text(text or 'No channels.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
-
-async def sa_manage_clones(update, context):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    clones = await db.get_all_clones()
-    text = '\U0001f9ec All Clones:\n\n'
-    for cl in (clones or []):
-        text += f"@{cl.get('bot_username', '?')} | Owner: {cl['owner_id']} | Active: {cl.get('is_active')}\n"
-    await query.edit_message_text(text or 'No clones.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
-
-async def sa_system_health(update, context):
-    query = update.callback_query
-    import psutil, os
-    text = f'\U0001f527 System Health\n\nMemory: {psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024:.1f} MB'
-    await query.edit_message_text(text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
-
-async def sa_platform_broadcast(update, context):
-    query = update.callback_query
-    await query.edit_message_text('Platform broadcast: Use /broadcast_all <message>',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='superadmin_panel')]]))
-
-async def sa_edit_support_username(update, context):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    current = config.SUPPORT_USERNAME or 'Not set'
-    context.user_data['awaiting_support_username'] = True
-    await query.edit_message_text(
-        f'\U0001f4ac EDIT SUPPORT USERNAME\n\n'
-        f'Current: @{current}\n\n'
-        f'Send the new support username (without @).\n'
-        f'Type /cancel to cancel.',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='superadmin_panel')]])
-    )
-
-async def sa_manage_subscriptions(update, context):
-    query = update.callback_query
-    db = context.application.bot_data.get('db')
-    owners = await db.get_all_owners(limit=50)
-    text = '\U0001f48e MANAGE PREMIUM\n\nTap on a user to activate/deactivate premium:\n\n'
-    buttons = []
-    for o in (owners or []):
-        tier = o.get('tier', 'free')
-        tier_icon = '\U0001f48e' if tier == 'premium' else '\U0001f4bc' if tier == 'business' else '\u26aa'
-        name = o.get('first_name', '') or o.get('username', '') or str(o['user_id'])
-        label = f'{tier_icon} {name} [{tier.upper()}]'
-        buttons.append([InlineKeyboardButton(label, callback_data=f"sa_activate_user:{o['user_id']}")])
-    if not owners:
-        text += 'No owners found.\n'
-    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-async def show_my_channels(update, context):
-    """Show all channels connected to this owner."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    db = context.application.bot_data.get('db')
-    if not db:
-        await query.edit_message_text('Bot is still initializing...')
-        return
-    channels = await db.get_owner_channels(user_id)
-    if not channels:
-        text = '\U0001f4e2 MY CHANNELS\n\nNo channels connected yet!\n\nAdd this bot as admin to your channel and it will be detected automatically.'
-        buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-        return
-    text = '\U0001f4e2 MY CHANNELS\n\n'
-    buttons = []
-    for ch in channels:
-        status = '\u2705' if ch.get('is_active', True) else '\u274c'
-        auto = 'Auto-approve ON' if ch.get('auto_approve') else 'Manual'
-        text += f"{status} {ch['chat_title']}\n"
-        text += f"   ID: {ch['chat_id']}\n"
-        text += f"   Members: {ch.get('member_count', 0)} | Pending: {ch.get('pending_requests', 0)}\n"
-        text += f"   Mode: {auto}\n\n"
-        buttons.append([InlineKeyboardButton(f"\u2699\ufe0f {ch['chat_title'][:25]}", callback_data=f"manage_channel:{ch['chat_id']}")])
-    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        await update.effective_message.reply_text(text, reply_markup=reply_markup)
