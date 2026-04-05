@@ -224,6 +224,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
+
+        elif data == 'edit_support_overview':
+            channels = await db.get_owner_channels(user_id)
+            if not channels:
+                await query.edit_message_text(
+                    '\U0001f4ac Support Username\n\nNo channels found. Add the bot to a channel first.',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]])
+                )
+                return
+            text = '\U0001f4ac SUPPORT USERNAME\n\nSelect a channel to set/edit its support username:\n\n'
+            buttons = []
+            for ch in channels:
+                title = ch.get('chat_title', 'Unknown')
+                support = ch.get('support_username', '')
+                label = f'{title}'
+                if support:
+                    label += f' (@{support})'
+                buttons.append([InlineKeyboardButton(label, callback_data=f'edit_support_username:{ch["chat_id"]}')])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
         elif data == 'my_channels':
             await show_my_channels(query, db, user_id)
 
