@@ -440,7 +440,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers.force_subscribe import force_sub_settings
             await force_sub_settings(update, context, cid)
 
-                else:
+        else:
             logger.warning(f'Unknown callback data: {data}')
             await query.edit_message_text('Unknown action.',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
