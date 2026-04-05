@@ -345,7 +345,49 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers.clone_bot import delete_clone
             await delete_clone(update, context, clone_id)
 
-        else:
+        elif data.startswith('sa_toggle:'):
+            feature = data.split(':')[1]
+            import config as cfg
+            import os
+            if feature == 'cross_promo':
+                cfg.ENABLE_CROSS_PROMO = not cfg.ENABLE_CROSS_PROMO
+                os.environ['ENABLE_CROSS_PROMO'] = str(cfg.ENABLE_CROSS_PROMO).lower()
+            elif feature == 'cloning':
+                cfg.ENABLE_CLONING = not cfg.ENABLE_CLONING
+                os.environ['ENABLE_CLONING'] = str(cfg.ENABLE_CLONING).lower()
+            from handlers.admin_panel import sa_feature_toggles
+            await sa_feature_toggles(update, context)
+
+        elif data == 'sa_feature_toggles':
+            from handlers.admin_panel import sa_feature_toggles
+            await sa_feature_toggles(update, context)
+
+        elif data.startswith('sa_activate_user:'):
+            target_uid = int(data.split(':')[1])
+            buttons = [
+                [InlineKeyboardButton('Premium (30d)', callback_data=f'sa_set_tier:{target_uid}:premium:30'),
+                 InlineKeyboardButton('Business (30d)', callback_data=f'sa_set_tier:{target_uid}:business:30')],
+                [InlineKeyboardButton('Deactivate', callback_data=f'sa_set_tier:{target_uid}:free:0')],
+                [InlineKeyboardButton('Back', callback_data='sa_manage_subs')],
+            ]
+            await query.edit_message_text(f'Manage premium for user {target_uid}:',
+                reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('sa_set_tier:'):
+            parts = data.split(':')
+            target_uid = int(parts[1])
+            tier = parts[2]
+            days = int(parts[3])
+            if tier == 'free':
+                await db.deactivate_premium(target_uid)
+                await query.edit_message_text(f'Deactivated premium for {target_uid}',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='sa_manage_subs')]]))
+            else:
+                await db.activate_premium(target_uid, tier, days)
+                await query.edit_message_text(f'Activated {tier} for {target_uid} ({days} days)',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='sa_manage_subs')]]))
+
+                else:
             logger.warning(f'Unknown callback data: {data}')
             await query.edit_message_text('Unknown action.',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]]))
