@@ -384,7 +384,7 @@ class DatabaseModels:
 
     async def get_total_channel_count(self):
         """Get total number of channels on the platform."""
-        row = await self.pool.fetchrow("SELECT COUNT(*) as count FROM channels")
+        row = await self.pool.fetchrow("SELECT COUNT(*) as count FROM managed_channels")
         return row['count'] if row else 0
 
     async def get_platform_stats(self):
@@ -392,9 +392,9 @@ class DatabaseModels:
         stats = {}
         row = await self.pool.fetchrow("SELECT COUNT(*) as c FROM channel_owners")
         stats['total_owners'] = row['c'] if row else 0
-        row = await self.pool.fetchrow("SELECT COUNT(*) as c FROM channels")
+        row = await self.pool.fetchrow("SELECT COUNT(*) as c FROM managed_channels")
         stats['total_channels'] = row['c'] if row else 0
-        row = await self.pool.fetchrow("SELECT COUNT(*) as c FROM clone_bots WHERE is_active = true")
+        row = await self.pool.fetchrow("SELECT COUNT(*) as c FROM bot_clones WHERE is_active = true")
         stats['active_clones'] = row['c'] if row else 0
         row = await self.pool.fetchrow("SELECT COUNT(*) as c FROM end_users")
         stats['total_users'] = row['c'] if row else 0
@@ -404,6 +404,6 @@ class DatabaseModels:
 
     async def get_all_clones(self):
         """Get all clone bots."""
-        rows = await self.pool.fetch("SELECT * FROM clone_bots ORDER BY created_at DESC")
+        rows = await self.pool.fetch("SELECT * FROM bot_clones ORDER BY created_at DESC")
         return [dict(r) for r in rows]
 
