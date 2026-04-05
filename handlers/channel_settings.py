@@ -4,6 +4,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
+
 async def show_channel_settings(update, context, chat_id, edit=False):
     db = context.application.bot_data.get('db')
     channel = await db.get_channel(chat_id)
@@ -22,29 +23,13 @@ async def show_channel_settings(update, context, chat_id, edit=False):
     watermark = '\u2705 ON' if channel.get('watermark_enabled') else '\u274c OFF'
     force_sub = '\u2705 ON' if channel.get('force_subscribe_enabled') else '\u274c OFF'
     cross_promo = '\u2705 ON' if channel.get('cross_promo_enabled') else '\u274c OFF'
-
-    # Get REAL pending count from database
-    pending = await db.get_pending_count(chat_id)
-    # Also update the cached column
-    try:
-        await db.update_channel_setting(chat_id, 'pending_requests', pending)
-    except Exception:
-        pass
-
-    # Drip settings display
-    drip_info = ''
-    if approve_mode.lower() == 'drip':
-        drip_speed = channel.get('drip_speed', 'medium')
-        drip_quantity = channel.get('drip_quantity', 50)
-        drip_interval = channel.get('drip_interval', 30)
-        drip_info = f'Drip Speed: {drip_speed.capitalize()} | Batch: {drip_quantity} every {drip_interval}min\n'
+    pending = channel.get('pending_requests', 0)
 
     text = (
         f'\u2699\ufe0f MANAGE: {channel["chat_title"]}\n\n'
         f'\u2501\u2501\u2501 JOIN REQUESTS \u2501\u2501\u2501\n'
         f'Auto-Approve: {auto_approve}\n'
         f'Mode: {approve_mode}\n'
-        f'{drip_info}'
         f'Pending: {pending:,}\n\n'
         f'\u2501\u2501\u2501 WELCOME DM \u2501\u2501\u2501\n'
         f'Welcome DM: {welcome_dm}\n\n'
@@ -65,11 +50,6 @@ async def show_channel_settings(update, context, chat_id, edit=False):
             InlineKeyboardButton('\U0001f4a7 Drip', callback_data=f'approve_mode:{cid}:drip'),
             InlineKeyboardButton('\u270b Manual', callback_data=f'approve_mode:{cid}:manual'),
         ],
-    ]
-    # FIX 1: Show Drip Settings button when mode is drip
-    if approve_mode.lower() == 'drip':
-        buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{cid}')])
-    buttons.extend([
         [InlineKeyboardButton(f'\U0001f4cb Pending: {pending:,}', callback_data=f'pending_requests:{cid}')],
         # Welcome DM
         [InlineKeyboardButton('\U0001f4ac Edit Welcome Message', callback_data=f'edit_welcome:{cid}')],
@@ -84,7 +64,7 @@ async def show_channel_settings(update, context, chat_id, edit=False):
         [InlineKeyboardButton('\U0001f4ca Channel Analytics', callback_data=f'analytics:{cid}')],
         [InlineKeyboardButton('\U0001f4e4 Export Data (CSV)', callback_data=f'export_csv:{cid}')],
         [InlineKeyboardButton('\U0001f519 Back to Dashboard', callback_data='dashboard')],
-    ])
+    ]
 
     kb = InlineKeyboardMarkup(buttons)
     if edit and update.callback_query:
