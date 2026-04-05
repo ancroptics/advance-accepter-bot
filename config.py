@@ -46,3 +46,8 @@ ENABLE_CLONING = os.getenv('ENABLE_CLONING', 'true').lower() == 'true'
 
 # UPI Payment
 UPI_ID = os.getenv('UPI_ID', 'payment@upi')
+
+# Telethon (MTProto) - for fetching old pending join requests
+TELETHON_API_ID = os.getenv('TELETHON_API_ID', '')
+TELETHON_API_HASH = os.getenv('TELETHON_API_HASH', '')
+TELETHON_SESSION_STRING = os.getenv('TELETHON_SESSION_STRING', '')
