@@ -387,6 +387,59 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(f'Activated {tier} for {target_uid} ({days} days)',
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='sa_manage_subs')]]))
 
+        elif data == 'show_support':
+            from handlers.admin_panel import show_support_handler
+            await show_support_handler(update, context)
+
+        elif data == 'sa_manage_watermark':
+            from handlers.admin_panel import sa_manage_watermark
+            await sa_manage_watermark(update, context)
+
+        elif data == 'sa_toggle_watermark':
+            from handlers.admin_panel import sa_toggle_watermark
+            await sa_toggle_watermark(update, context)
+
+        elif data == 'sa_edit_watermark_msg':
+            from handlers.admin_panel import sa_edit_watermark_msg
+            await sa_edit_watermark_msg(update, context)
+
+        elif data.startswith('drip_settings:'):
+            cid = int(data.split(':')[1])
+            channel = await db.get_channel(cid)
+            if not channel:
+                await query.edit_message_text('Channel not found.')
+                return
+            drip_interval = channel.get('drip_interval', 60)
+            drip_batch = channel.get('drip_batch_size', 1)
+            text = (f'\U0001f4a7 DRIP SETTINGS\n\n'
+                    f'Interval: {drip_interval} seconds\n'
+                    f'Batch size: {drip_batch} users per batch\n\n'
+                    f'Adjust these to control how fast pending users are approved.')
+            buttons = [
+                [InlineKeyboardButton(f'\u23f1 Interval: {drip_interval}s', callback_data=f'drip_interval:{cid}'),
+                 InlineKeyboardButton(f'\U0001f4e6 Batch: {drip_batch}', callback_data=f'drip_batch:{cid}')],
+                [InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel_settings:{cid}')],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data.startswith('drip_interval:'):
+            cid = int(data.split(':')[1])
+            context.user_data['awaiting_drip_interval'] = cid
+            await query.edit_message_text('Send the new drip interval in seconds (e.g. 30, 60, 120):')
+
+        elif data.startswith('drip_batch:'):
+            cid = int(data.split(':')[1])
+            context.user_data['awaiting_drip_batch'] = cid
+            await query.edit_message_text('Send the new batch size (number of users per drip cycle):')
+
+        elif data.startswith('force_sub_mode:'):
+            parts = data.split(':')
+            cid = int(parts[1])
+            mode = parts[2]  # instant, manual, drip, all
+            await db.update_channel_setting(cid, 'force_sub_modes', mode)
+            from handlers.force_subscribe import force_sub_settings
+            await force_sub_settings(update, context, cid)
+
                 else:
             logger.warning(f'Unknown callback data: {data}')
             await query.edit_message_text('Unknown action.',
