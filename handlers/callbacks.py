@@ -42,7 +42,11 @@ async def show_force_sub_settings(query, db, chat_id):
     buttons.append([InlineKeyboardButton('\u2795 Add Channel', callback_data=f'add_force_sub_ch:{chat_id}')])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')])
 
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        if 'message is not modified' not in str(e).lower():
+            raise
 
 
 async def show_channel_settings(query, db, chat_id, user_id, context=None):
@@ -116,7 +120,11 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     ])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='my_channels')])
 
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        if 'message is not modified' not in str(e).lower():
+            raise
 
 
 async def show_pending_requests(query, context, db, chat_id, user_id):
@@ -236,6 +244,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = data.split(':')
             chat_id = int(parts[1])
             mode = parts[2]
+            channel = await db.get_channel(chat_id)
+            current_mode = channel.get('approve_mode', 'instant') if channel else ''
+            if current_mode == mode:
+                await query.answer(f'Already set to {mode}', show_alert=False)
+                return
             await db.update_channel_setting(chat_id, 'approve_mode', mode)
             await query.answer(f'Mode set to {mode}', show_alert=True)
             await show_channel_settings(query, db, chat_id, user_id, context)
@@ -773,6 +786,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f'Unknown callback data: {data}')
 
     except Exception as e:
+        if 'message is not modified' in str(e).lower():
+            logger.debug(f'Message not modified (same content): {data}')
+            return
         logger.exception(f'Error in button_callback: {e}')
         try:
             await query.edit_message_text(f'An error occurred: {str(e)[:200]}')
