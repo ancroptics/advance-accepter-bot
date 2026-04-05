@@ -2,86 +2,31 @@ import json
 import logging
 import os
 from datetime import datetime, date, timedelta
-import asyncpg
 
 logger = logging.getLogger(__name__)
 
-# Tier limits
-TIER_LIMITS = {
-    'free': {'channels': 2, 'monthly_approvals': 500, 'dm': False, 'broadcast': False, 'analytics': False, 'export': False, 'clone': False},
-    'pro': {'channels': 10, 'monthly_approvals': 50000, 'dm': True, 'broadcast': True, 'analytics': True, 'export': True, 'clone': True},
-    'enterprise': {'channels': 100, 'monthly_approvals': -1, 'dm': True, 'broadcast': True, 'analytics': True, 'export': True, 'clone': True},
-}
+MIGRATION_SQL_PATH = os.path.join(os.path.dirname(__file__), 'migrations', '001_initial_schema.sql')
 
+class DatabaseModels:
+    """Wraps all database operations for the bot."""
 
-class Database:
-    def __init__(self):
-        self.pool = None
+    def __init__(self, pool):
+        self.pool = pool
 
-    async def init(self):
-        """Initialize database connection pool and create tables."""
-        self.pool = await asyncpg.create_pool(
-            os.getenv('DATABASE_URL'),
-            min_size=2,
-            max_size=10
-        )
-        await self._create_tables()
-        logger.info('Database initialized')
-
-    async def _create_tables(self):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    tier TEXT DEFAULT 'free',
-                    monthly_approvals INTEGER DEFAULT 0,
-                    approval_reset_date DATE,
-                    is_banned BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT NOW()
-                );
-
-                CREATE TABLE IF NOT EXISTS channels (
-                    chat_id BIGINT PRIMARY KEY,
-                    chat_title TEXT,
-                    owner_id BIGINT REFERENCES users(user_id),
-                    approve_mode TEXT DEFAULT 'instant',
-                    drip_rate INTEGER DEFAULT 50,
-                    drip_interval INTEGER DEFAULT 30,
-                    dm_enabled BOOLEAN DEFAULT FALSE,
-                    dm_template TEXT DEFAULT '',
-                    pending_requests INTEGER DEFAULT 0,
-                    total_approved INTEGER DEFAULT 0,
-                    total_declined INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT NOW()
-                );
-
-                CREATE TABLE IF NOT EXISTS join_requests (
-                    id SERIAL PRIMARY KEY,
-                    chat_id BIGINT REFERENCES channels(chat_id) ON DELETE CASCADE,
-                    user_id BIGINT,
-                    username TEXT,
-                    first_name TEXT,
-                    status TEXT DEFAULT 'pending',
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    processed_at TIMESTAMP
-                );
-
-                CREATE TABLE IF NOT EXISTS daily_stats (
-                    id SERIAL PRIMARY KEY,
-                    chat_id BIGINT REFERENCES channels(chat_id) ON DELETE CASCADE,
-                    stat_date DATE DEFAULT CURRENT_DATE,
-                    approved INTEGER DEFAULT 0,
-                    declined INTEGER DEFAULT 0,
-                    pending INTEGER DEFAULT 0,
-                    UNIQUE(chat_id, stat_date)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_jr_chat_status ON join_requests(chat_id, status);
-                CREATE INDEX IF NOT EXISTS idx_jr_created ON join_requests(created_at);
-                CREATE INDEX IF NOT EXISTS idx_ds_chat_date ON daily_stats(chat_id, stat_date);
-            ''')
+    async def run_migrations(self):
+        """Run SQL migrations from file."""
+        try:
+            if os.path.exists(MIGRATION_SQL_PATH):
+                with open(MIGRATION_SQL_PATH, 'r') as f:
+                    sql = f.read()
+                async with self.pool.acquire() as conn:
+                    await conn.execute(sql)
+                logger.info("Migrations completed successfully")
+            else:
+                logger.warning(f"Migration file not found: {MIGRATION_SQL_PATH}")
+        except Exception as e:
+            logger.error(f"Migration error: {e}")
+            raise
 
     # --- User operations ---
 
@@ -99,18 +44,10 @@ class Database:
             row = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
             return dict(row) if row else None
 
-    async def get_all_users(self, limit=50, offset=0):
+    async def get_all_users(self):
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch('SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2', limit, offset)
+            rows = await conn.fetch('SELECT * FROM users ORDER BY created_at DESC')
             return [dict(r) for r in rows]
-
-    async def get_user_count(self):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval('SELECT COUNT(*) FROM users')
-
-    async def set_user_tier(self, user_id: int, tier: str):
-        async with self.pool.acquire() as conn:
-            await conn.execute('UPDATE users SET tier = $1 WHERE user_id = $2', tier, user_id)
 
     async def ban_user(self, user_id: int):
         async with self.pool.acquire() as conn:
@@ -120,8 +57,13 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute('UPDATE users SET is_banned = FALSE WHERE user_id = $1', user_id)
 
+    async def is_banned(self, user_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval('SELECT is_banned FROM users WHERE user_id = $1', user_id)
+
     async def check_approval_limit(self, user_id: int):
         """Check if user has reached monthly approval limit. Returns (remaining, limit)."""
+        from config import TIER_LIMITS
         user = await self.get_user(user_id)
         if not user:
             return 0, 0
@@ -193,7 +135,7 @@ class Database:
             set_clauses.append(f"{k} = ${i}")
             values.append(v)
         values.append(chat_id)
-        query = f"UPDATE channels SET {', '.join(set_clauses)} WHERE chat_id = ${len(values)}"
+        query = f"UPDATE channels SET {'%, '.join(set_clauses)} WHERE chat_id = ${len(values)}"
         async with self.pool.acquire() as conn:
             await conn.execute(query, *values)
 
@@ -265,6 +207,26 @@ class Database:
                 ON CONFLICT (chat_id, stat_date) DO UPDATE SET declined = daily_stats.declined + 1
             ''', chat_id)
 
+    async def approve_batch_requests(self, chat_id: int, user_ids: list):
+        """Batch approve multiple requests."""
+        async with self.pool.acquire() as conn:
+            await conn.execute('''
+                UPDATE join_requests SET status = 'approved', processed_at = NOW()
+                WHERE chat_id = $1 AND user_id = ANY($2::bigint[]) AND status = 'pending'
+            ''', chat_id, user_ids)
+            count = len(user_ids)
+            await conn.execute('''
+                UPDATE channels SET
+                    pending_requests = GREATEST(pending_requests - $1, 0),
+                    total_approved = total_approved + $1
+                WHERE chat_id = $2
+            ''', count, chat_id)
+            await conn.execute('''
+                INSERT INTO daily_stats (chat_id, approved) VALUES ($1, $2)
+                ON CONFLICT (chat_id, stat_date) DO UPDATE SET approved = daily_stats.approved + $2
+            ''', chat_id, count)
+            return count
+
     async def get_pending_requests(self, chat_id: int, limit: int = 50):
         async with self.pool.acquire() as conn:
             rows = await conn.fetch('''
@@ -335,7 +297,3 @@ class Database:
         if self.pool:
             await self.pool.close()
             logger.info('Database connection closed')
-
-
-# Singleton
-db = Database()
