@@ -99,6 +99,7 @@ async def superadmin_handler(update, context):
         [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
         [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
         [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
+        [InlineKeyboardButton('\U0001f3a8 Watermark Settings', callback_data='sa_watermark_settings')],
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
