@@ -99,6 +99,18 @@ async def handle_text_input(update, context):
         )
         return
 
+    # Handle watermark username editing
+    if context.user_data.get('editing_watermark_for'):
+        chat_id = context.user_data.pop('editing_watermark_for')
+        new_username = update.message.text.strip().replace('@', '')
+        await db.update_channel_setting(chat_id, 'watermark_username', new_username)
+        await db.update_channel_setting(chat_id, 'watermark_enabled', True)
+        await update.message.reply_text(
+            f'\u2705 Watermark set to @{new_username}\n\nThis will appear on all welcome and force-sub messages.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
+        )
+        return
+
     # Handle UPI ID editing (superadmin)
     if context.user_data.get('awaiting_upi_input'):
         if user_id not in config.SUPERADMIN_IDS:
