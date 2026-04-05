@@ -120,6 +120,7 @@ class DatabaseModels:
             'welcome_dm_enabled', 'welcome_message', 'welcome_media_type', 'welcome_media_file_id',
             'welcome_buttons_json', 'welcome_parse_mode', 'welcome_messages_i18n',
             'force_subscribe_enabled', 'force_subscribe_channels',
+            'force_sub_mode', 'force_sub_timeout',
             'cross_promo_enabled', 'cross_promo_category', 'cross_promo_text',
             'watermark_enabled', 'member_count', 'is_active', 'bot_is_admin',
             'pending_requests',
@@ -335,6 +336,22 @@ class DatabaseModels:
     async def deactivate_premium(self, user_id):
         return await self.db.execute(
             "UPDATE channel_owners SET tier = 'free' WHERE user_id = $1", user_id)
+
+
+    async def get_drip_channels(self):
+        """Get channels with drip approve mode that have pending requests."""
+        return await self.db.fetch(
+            """SELECT * FROM managed_channels 
+            WHERE is_active = TRUE AND bot_is_admin = TRUE 
+            AND approve_mode = 'drip'""")
+
+    async def get_drip_batch(self, chat_id, batch_size=5):
+        """Get a batch of pending requests for drip approval."""
+        return await self.db.fetch(
+            """SELECT * FROM join_requests 
+            WHERE chat_id = $1 AND status = 'pending'
+            ORDER BY request_time ASC
+            LIMIT $2""", chat_id, batch_size)
 
     async def get_expired_force_sub_requests(self, hours=24):
         """Get pending join requests where force sub was required but time has expired."""
