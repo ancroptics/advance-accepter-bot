@@ -29,369 +29,327 @@ class DatabaseModels:
             await conn.execute("""
                 INSERT INTO channels (user_id, channel_id, channel_name, channel_type)
                 VALUES ($1, $2, $3, $4)
-                ON CONFLICT (channel_id) DO UPDATE SET
-                    channel_name = $3,
-                    channel_type = $4,
-                    is_active = TRUE
+                ON CONFLICT (user_id, channel_id) DO UPDATE
+                SET channel_name = $3, channel_type = $4
             """, user_id, channel_id, channel_name, channel_type)
 
-    async def remove_channel(self, channel_id):
+    async def remove_channel(self, user_id, channel_id):
         async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE channels SET is_active = FALSE WHERE channel_id = $1", channel_id)
+            await conn.execute(
+                "DELETE FROM channels WHERE user_id = $1 AND channel_id = $2",
+                user_id, channel_id)
 
-    async def get_user_channels(self, user_id):
+    async def get_channels(self, user_id):
         async with self.pool.acquire() as conn:
             return await conn.fetch(
-                "SELECT * FROM channels WHERE user_id = $1 AND is_active = TRUE ORDER BY added_at DESC",
-                user_id
-            )
+                "SELECT * FROM channels WHERE user_id = $1", user_id)
 
-    async def get_channel(self, channel_id):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchrow("SELECT * FROM channels WHERE channel_id = $1", channel_id)
-
-    async def get_all_active_channels(self):
-        async with self.pool.acquire() as conn:
-            return await conn.fetch("SELECT * FROM channels WHERE is_active = TRUE")
-
-    # ── Channel Settings ──────────────────────────────────────────
-    async def get_channel_settings(self, channel_id):
-        async with self.pool.acquire() as conn:
-            settings = await conn.fetchrow(
-                "SELECT * FROM channel_settings WHERE channel_id = $1", channel_id
-            )
-            if not settings:
-                await conn.execute(
-                    "INSERT INTO channel_settings (channel_id) VALUES ($1) ON CONFLICT DO NOTHING",
-                    channel_id
-                )
-                settings = await conn.fetchrow(
-                    "SELECT * FROM channel_settings WHERE channel_id = $1", channel_id
-                )
-            return settings
-
-    async def update_channel_setting(self, channel_id, setting, value):
-        async with self.pool.acquire() as conn:
-            await self.get_channel_settings(channel_id)
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value)
-            await conn.execute(
-                f"UPDATE channel_settings SET {setting} = $1 WHERE channel_id = $2",
-                value, channel_id
-            )
-
-    # ── Pending Requests ──────────────────────────────────────────
-    async def add_pending_request(self, channel_id, user_id, username=None, first_name=None):
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO pending_requests (channel_id, user_id, username, first_name)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (channel_id, user_id) DO UPDATE SET
-                    username = COALESCE($3, pending_requests.username),
-                    first_name = COALESCE($4, pending_requests.first_name),
-                    requested_at = NOW()
-            """, channel_id, user_id, username, first_name)
-
-    async def get_pending_requests(self, channel_id, limit=50, offset=0):
-        async with self.pool.acquire() as conn:
-            return await conn.fetch("""
-                SELECT * FROM pending_requests
-                WHERE channel_id = $1 AND status = 'pending'
-                ORDER BY requested_at DESC
-                LIMIT $2 OFFSET $3
-            """, channel_id, limit, offset)
-
-    async def get_pending_count(self, channel_id):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT COUNT(*) as count FROM pending_requests WHERE channel_id = $1 AND status = 'pending'",
-                channel_id
-            )
-            return row['count'] if row else 0
-
-    async def approve_request(self, channel_id, user_id):
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE pending_requests SET status = 'approved', processed_at = NOW()
-                WHERE channel_id = $1 AND user_id = $2
-            """, channel_id, user_id)
-
-    async def decline_request(self, channel_id, user_id):
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE pending_requests SET status = 'declined', processed_at = NOW()
-                WHERE channel_id = $1 AND user_id = $2
-            """, channel_id, user_id)
-
-    async def batch_approve_requests(self, channel_id, user_ids):
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE pending_requests SET status = 'approved', processed_at = NOW()
-                WHERE channel_id = $1 AND user_id = ANY($2) AND status = 'pending'
-            """, channel_id, user_ids)
-
-    async def batch_decline_requests(self, channel_id, user_ids):
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE pending_requests SET status = 'declined', processed_at = NOW()
-                WHERE channel_id = $1 AND user_id = ANY($2) AND status = 'pending'
-            """, channel_id, user_ids)
-
-    async def approve_all_requests(self, channel_id):
-        async with self.pool.acquire() as conn:
-            result = await conn.execute("""
-                UPDATE pending_requests SET status = 'approved', processed_at = NOW()
-                WHERE channel_id = $1 AND status = 'pending'
-            """, channel_id)
-            count = int(result.split()[-1]) if result else 0
-            return count
-
-    async def decline_all_requests(self, channel_id):
-        async with self.pool.acquire() as conn:
-            result = await conn.execute("""
-                UPDATE pending_requests SET status = 'declined', processed_at = NOW()
-                WHERE channel_id = $1 AND status = 'pending'
-            """, channel_id)
-            count = int(result.split()[-1]) if result else 0
-            return count
-
-    # ── User Management ───────────────────────────────────────────
-    async def add_user(self, user_id, username=None, first_name=None, referred_by=None):
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO users (user_id, username, first_name, referred_by)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    username = COALESCE($2, users.username),
-                    first_name = COALESCE($3, users.first_name),
-                    last_active = NOW()
-            """, user_id, username, first_name, referred_by)
-
-    async def get_user(self, user_id):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
-
-    async def get_total_users(self):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT COUNT(*) as count FROM users")
-            return row['count'] if row else 0
-
-    async def get_active_users(self, days=7):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT COUNT(*) as count FROM users WHERE last_active > NOW() - INTERVAL '1 day' * $1",
-                days
-            )
-            return row['count'] if row else 0
-
-    async def is_premium(self, user_id):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT premium_until FROM users WHERE user_id = $1", user_id
-            )
-            if row and row['premium_until']:
-                return row['premium_until'] > datetime.now()
-            return False
-
-    async def set_premium(self, user_id, until):
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE users SET premium_until = $1 WHERE user_id = $2",
-                until, user_id
-            )
-
-    async def get_user_language(self, user_id):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT language FROM users WHERE user_id = $1", user_id
-            )
-            return row['language'] if row else 'en'
-
-    async def set_user_language(self, user_id, language):
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE users SET language = $1 WHERE user_id = $2",
-                language, user_id
-            )
-
-    # ── Welcome Messages ──────────────────────────────────────────
-    async def get_welcome_message(self, channel_id):
+    async def get_channel(self, user_id, channel_id):
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
-                "SELECT * FROM welcome_messages WHERE channel_id = $1", channel_id
-            )
+                "SELECT * FROM channels WHERE user_id = $1 AND channel_id = $2",
+                user_id, channel_id)
 
-    async def set_welcome_message(self, channel_id, message_text, media_type=None, media_file_id=None, buttons=None):
+    # ── Settings ────────────────────────────────────────────────
+    async def get_settings(self, user_id):
         async with self.pool.acquire() as conn:
-            buttons_json = json.dumps(buttons) if buttons else None
+            row = await conn.fetchrow(
+                "SELECT * FROM user_settings WHERE user_id = $1", user_id)
+            if row:
+                return dict(row)
             await conn.execute("""
-                INSERT INTO welcome_messages (channel_id, message_text, media_type, media_file_id, buttons)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (channel_id) DO UPDATE SET
-                    message_text = $2,
-                    media_type = $3,
-                    media_file_id = $4,
-                    buttons = $5
-            """, channel_id, message_text, media_type, media_file_id, buttons_json)
+                INSERT INTO user_settings (user_id) VALUES ($1)
+                ON CONFLICT DO NOTHING
+            """, user_id)
+            row = await conn.fetchrow(
+                "SELECT * FROM user_settings WHERE user_id = $1", user_id)
+            return dict(row) if row else {}
 
-    async def delete_welcome_message(self, channel_id):
+    async def update_setting(self, user_id, key, value):
+        allowed = {
+            'auto_accept', 'auto_decline', 'keyword_filter',
+            'welcome_message', 'language', 'min_members',
+            'auto_accept_delay', 'auto_decline_delay',
+            'working_hours_start', 'working_hours_end',
+            'auto_accept_premium', 'block_duplicates',
+            'accepted_count', 'declined_count',
+            'filter_mode', 'notification_chat_id'
+        }
+        if key not in allowed:
+            raise ValueError(f"Invalid setting: {key}")
         async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM welcome_messages WHERE channel_id = $1", channel_id)
+            await conn.execute(f"""
+                INSERT INTO user_settings (user_id, {key})
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET {key} = $2
+            """, user_id, value)
 
-    # ── Force Subscribe ───────────────────────────────────────────
-    async def get_force_sub_channels(self, channel_id):
+    async def increment_counter(self, user_id, counter_type):
+        col = 'accepted_count' if counter_type == 'accepted' else 'declined_count'
         async with self.pool.acquire() as conn:
-            return await conn.fetch(
-                "SELECT * FROM force_sub_channels WHERE source_channel_id = $1 AND is_active = TRUE",
-                channel_id
-            )
+            await conn.execute(f"""
+                INSERT INTO user_settings (user_id, {col})
+                VALUES ($1, 1)
+                ON CONFLICT (user_id) DO UPDATE SET {col} = user_settings.{col} + 1
+            """, user_id)
 
-    async def add_force_sub_channel(self, source_channel_id, target_channel_id, target_channel_name):
+    async def reset_counters(self, user_id):
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO force_sub_channels (source_channel_id, target_channel_id, target_channel_name)
+                UPDATE user_settings
+                SET accepted_count = 0, declined_count = 0
+                WHERE user_id = $1
+            """, user_id)
+
+    # ── Keywords ───────────────────────────────────────────────
+    async def add_keyword(self, user_id, keyword, action='accept'):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO keywords (user_id, keyword, action)
                 VALUES ($1, $2, $3)
-                ON CONFLICT (source_channel_id, target_channel_id) DO UPDATE SET
-                    target_channel_name = $3,
-                    is_active = TRUE
-            """, source_channel_id, target_channel_id, target_channel_name)
+                ON CONFLICT (user_id, keyword) DO UPDATE SET action = $3
+            """, user_id, keyword.lower(), action)
 
-    async def remove_force_sub_channel(self, source_channel_id, target_channel_id):
+    async def remove_keyword(self, user_id, keyword):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM keywords WHERE user_id = $1 AND keyword = $2",
+                user_id, keyword.lower())
+
+    async def get_keywords(self, user_id, action=None):
+        async with self.pool.acquire() as conn:
+            if action:
+                return await conn.fetch(
+                    "SELECT * FROM keywords WHERE user_id = $1 AND action = $2",
+                    user_id, action)
+            return await conn.fetch(
+                "SELECT * FROM keywords WHERE user_id = $1", user_id)
+
+    # ── Scheduled Actions ──────────────────────────────────────
+    async def add_scheduled_action(self, user_id, channel_id, action, scheduled_time, request_data=None):
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                UPDATE force_sub_channels SET is_active = FALSE
-                WHERE source_channel_id = $1 AND target_channel_id = $2
-            """, source_channel_id, target_channel_id)
+                INSERT INTO scheduled_actions (user_id, channel_id, action, scheduled_time, request_data)
+                VALUES ($1, $2, $3, $4, $5)
+            """, user_id, channel_id, action, scheduled_time,
+                json.dumps(request_data) if request_data else None)
 
-    # ── Analytics ─────────────────────────────────────────────────
-    async def record_analytics(self, channel_id, event_type, count=1):
-        today = date.today()
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO analytics (channel_id, event_date, event_type, count)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (channel_id, event_date, event_type) DO UPDATE SET
-                    count = analytics.count + $4
-            """, channel_id, today, event_type, count)
-
-    async def get_analytics(self, channel_id, days=7):
+    async def get_pending_actions(self):
         async with self.pool.acquire() as conn:
             return await conn.fetch("""
-                SELECT event_date, event_type, count FROM analytics
-                WHERE channel_id = $1 AND event_date >= NOW() - INTERVAL '1 day' * $2
-                ORDER BY event_date DESC
-            """, channel_id, days)
-
-    async def get_analytics_summary(self, channel_id, days=7):
-        async with self.pool.acquire() as conn:
-            return await conn.fetch("""
-                SELECT event_type, SUM(count) as total FROM analytics
-                WHERE channel_id = $1 AND event_date >= NOW() - INTERVAL '1 day' * $2
-                GROUP BY event_type
-            """, channel_id, days)
-
-    # ── Broadcast ─────────────────────────────────────────────────
-    async def create_broadcast(self, user_id, channel_id, message_text, media_type=None, media_file_id=None, schedule_time=None):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("""
-                INSERT INTO broadcasts (user_id, channel_id, message_text, media_type, media_file_id, schedule_time)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING id
-            """, user_id, channel_id, message_text, media_type, media_file_id, schedule_time)
-            return row['id']
-
-    async def get_pending_broadcasts(self):
-        async with self.pool.acquire() as conn:
-            return await conn.fetch("""
-                SELECT * FROM broadcasts
-                WHERE status = 'pending' AND (schedule_time IS NULL OR schedule_time <= NOW())
-                ORDER BY created_at ASC
+                SELECT * FROM scheduled_actions
+                WHERE status = 'pending' AND scheduled_time <= NOW()
+                ORDER BY scheduled_time
             """)
 
-    async def update_broadcast_status(self, broadcast_id, status, sent_count=0, failed_count=0):
+    async def update_action_status(self, action_id, status):
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                UPDATE broadcasts SET status = $1, sent_count = $2, failed_count = $3
-                WHERE id = $4
-            """, status, sent_count, failed_count, broadcast_id)
+                UPDATE scheduled_actions SET status = $2 WHERE id = $1
+            """, action_id, status)
 
-    # ── Clone Bots ────────────────────────────────────────────────
-    async def add_clone_bot(self, user_id, bot_token, bot_username):
+    async def get_scheduled_actions(self, user_id):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("""
+                SELECT * FROM scheduled_actions
+                WHERE user_id = $1 AND status = 'pending'
+                ORDER BY scheduled_time
+            """, user_id)
+
+    async def cancel_scheduled_action(self, action_id, user_id):
+        async with self.pool.acquire() as conn:
+            return await conn.execute("""
+                UPDATE scheduled_actions
+                SET status = 'cancelled'
+                WHERE id = $1 AND user_id = $2 AND status = 'pending'
+            """, action_id, user_id)
+
+    # ── Request Logs ────────────────────────────────────────────
+    async def log_request(self, user_id, channel_id, request_type, status, request_data=None):
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO clone_bots (user_id, bot_token, bot_username)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (bot_token) DO UPDATE SET
-                    bot_username = $3,
-                    is_active = TRUE
-            """, user_id, bot_token, bot_username)
+                INSERT INTO request_logs (user_id, channel_id, request_type, status, request_data)
+                VALUES ($1, $2, $3, $4, $5)
+            """, user_id, channel_id, request_type, status,
+                json.dumps(request_data) if request_data else None)
 
-    async def get_user_clone_bots(self, user_id):
+    async def get_request_logs(self, user_id, limit=50):
         async with self.pool.acquire() as conn:
-            return await conn.fetch(
-                "SELECT * FROM clone_bots WHERE user_id = $1 AND is_active = TRUE",
-                user_id
-            )
+            return await conn.fetch("""
+                SELECT * FROM request_logs
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+            """, user_id, limit)
 
-    async def remove_clone_bot(self, bot_token):
+    async def get_stats(self, user_id):
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE clone_bots SET is_active = FALSE WHERE bot_token = $1",
-                bot_token
-            )
+            row = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'accepted') as accepted,
+                    COUNT(*) FILTER (WHERE status = 'declined') as declined,
+                    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                    COUNT(*) as total
+                FROM request_logs WHERE user_id = $1
+            """, user_id)
+            return dict(row) if row else {'accepted': 0, 'declined': 0, 'pending': 0, 'total': 0}
 
-    async def get_clone_bot(self, bot_token):
+    # ── Premium / Subscription ──────────────────────────────────
+    async def get_subscription(self, user_id):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("""
+                SELECT * FROM subscriptions
+                WHERE user_id = $1 AND status = 'active'
+                AND expires_at > NOW()
+                ORDER BY expires_at DESC LIMIT 1
+            """, user_id)
+
+    async def create_subscription(self, user_id, plan, duration_days, payment_id=None):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE subscriptions SET status = 'expired'
+                WHERE user_id = $1 AND status = 'active'
+            """, user_id)
+            await conn.execute("""
+                INSERT INTO subscriptions (user_id, plan, status, expires_at, payment_id)
+                VALUES ($1, $2, 'active', NOW() + INTERVAL '1 day' * $3, $4)
+            """, user_id, plan, duration_days, payment_id)
+
+    async def is_premium(self, user_id):
+        sub = await self.get_subscription(user_id)
+        return sub is not None
+
+    async def cancel_subscription(self, user_id):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE subscriptions SET status = 'cancelled'
+                WHERE user_id = $1 AND status = 'active'
+            """, user_id)
+
+    # ── Payments ────────────────────────────────────────────────
+    async def create_payment(self, user_id, amount, currency, provider, plan):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO payments (user_id, amount, currency, provider, plan, status)
+                VALUES ($1, $2, $3, $4, $5, 'pending')
+                RETURNING id
+            """, user_id, amount, currency, provider, plan)
+            return row['id'] if row else None
+
+    async def update_payment_status(self, payment_id, status, provider_payment_id=None):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE payments
+                SET status = $2, provider_payment_id = $3, updated_at = NOW()
+                WHERE id = $1
+            """, payment_id, status, provider_payment_id)
+
+    async def get_payment(self, payment_id):
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
-                "SELECT * FROM clone_bots WHERE bot_token = $1",
-                bot_token
-            )
+                "SELECT * FROM payments WHERE id = $1", payment_id)
 
-    # ── Templates ─────────────────────────────────────────────────
-    async def save_template(self, user_id, name, content, template_type='welcome'):
+    async def get_user_payments(self, user_id):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("""
+                SELECT * FROM payments WHERE user_id = $1
+                ORDER BY created_at DESC
+            """, user_id)
+
+    # ── Referrals ───────────────────────────────────────────────
+    async def create_referral_code(self, user_id, code):
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO templates (user_id, name, content, template_type)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (user_id, name) DO UPDATE SET
-                    content = $3,
-                    template_type = $4
-            """, user_id, name, content, template_type)
+                INSERT INTO referrals (user_id, referral_code)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET referral_code = $2
+            """, user_id, code)
 
-    async def get_user_templates(self, user_id, template_type=None):
-        async with self.pool.acquire() as conn:
-            if template_type:
-                return await conn.fetch(
-                    "SELECT * FROM templates WHERE user_id = $1 AND template_type = $2 ORDER BY name",
-                    user_id, template_type
-                )
-            return await conn.fetch(
-                "SELECT * FROM templates WHERE user_id = $1 ORDER BY name",
-                user_id
-            )
-
-    async def delete_template(self, user_id, name):
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM templates WHERE user_id = $1 AND name = $2",
-                user_id, name
-            )
-
-    # ── Referral System ───────────────────────────────────────────
-    async def get_referral_count(self, user_id):
+    async def get_referral_code(self, user_id):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT COUNT(*) as count FROM users WHERE referred_by = $1",
-                user_id
-            )
+                "SELECT referral_code FROM referrals WHERE user_id = $1", user_id)
+            return row['referral_code'] if row else None
+
+    async def use_referral(self, referral_code, referred_user_id):
+        async with self.pool.acquire() as conn:
+            ref = await conn.fetchrow(
+                "SELECT * FROM referrals WHERE referral_code = $1", referral_code)
+            if not ref:
+                return False
+            if ref['user_id'] == referred_user_id:
+                return False
+            await conn.execute("""
+                UPDATE referrals
+                SET referral_count = referral_count + 1
+                WHERE referral_code = $1
+            """, referral_code)
+            return True
+
+    async def get_referral_stats(self, user_id):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM referrals WHERE user_id = $1", user_id)
+
+    # ── Admin helpers ───────────────────────────────────────────
+    async def get_all_users(self, limit=100, offset=0):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("""
+                SELECT DISTINCT user_id FROM user_settings
+                ORDER BY user_id
+                LIMIT $1 OFFSET $2
+            """, limit, offset)
+
+    async def get_user_count(self):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT COUNT(DISTINCT user_id) as count FROM user_settings")
             return row['count'] if row else 0
+
+    async def get_active_channels_count(self):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) as count FROM channels")
+            return row['count'] if row else 0
+
+    async def get_total_requests(self):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) as count FROM request_logs")
+            return row['count'] if row else 0
+
+    async def get_active_subscriptions(self):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("""
+                SELECT * FROM subscriptions
+                WHERE status = 'active' AND expires_at > NOW()
+            """)
+
+    async def broadcast_message(self, message):
+        async with self.pool.acquire() as conn:
+            users = await conn.fetch(
+                "SELECT DISTINCT user_id FROM user_settings")
+            return [row['user_id'] for row in users]
+
+    async def get_revenue_stats(self):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'completed') as total_payments,
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as total_revenue,
+                    COUNT(*) FILTER (WHERE status = 'completed'
+                        AND created_at > NOW() - INTERVAL '30 days') as monthly_payments,
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'completed'
+                        AND created_at > NOW() - INTERVAL '30 days'), 0) as monthly_revenue
+                FROM payments
+            """)
 
     async def get_top_referrers(self, limit=10):
         async with self.pool.acquire() as conn:
             return await conn.fetch("""
-                SELECT referred_by as user_id, COUNT(*) as referral_count
-                FROM users WHERE referred_by IS NOT NULL
-                GROUP BY referred_by
+                SELECT user_id, referral_code, referral_count
+                FROM referrals
+                WHERE referral_count > 0
                 ORDER BY referral_count DESC
                 LIMIT $1
             """, limit)
