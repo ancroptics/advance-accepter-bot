@@ -513,13 +513,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for req in db_pending:
                 try:
                     await context.bot.approve_chat_join_request(chat_id, req['user_id'])
-                    await db.update_request_status(req['user_id'], chat_id, 'approved',
-                                                   dm_sent=False, processed_by='bulk_sync')
+                    await db.update_join_request_status(req['user_id'], chat_id, 'approved', processed_by='bulk_sync')
                     approved += 1
                 except Exception as e:
                     if 'USER_ALREADY_PARTICIPANT' in str(e).upper() or 'HIDE_REQUESTER_MISSING' in str(e).upper():
-                        await db.update_request_status(req['user_id'], chat_id, 'approved',
-                                                       dm_sent=False, processed_by='bulk_sync')
+                        await db.update_join_request_status(req['user_id'], chat_id, 'approved', processed_by='bulk_sync')
                         approved += 1
                     else:
                         failed += 1
@@ -564,13 +562,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for req in db_pending:
                 try:
                     await context.bot.decline_chat_join_request(chat_id, req['user_id'])
-                    await db.update_request_status(req['user_id'], chat_id, 'declined',
-                                                   dm_sent=False, processed_by='bulk_sync')
+                    await db.update_join_request_status(req['user_id'], chat_id, 'declined', processed_by='bulk_sync')
                     declined += 1
                 except Exception as e:
                     if 'HIDE_REQUESTER_MISSING' in str(e).upper():
-                        await db.update_request_status(req['user_id'], chat_id, 'declined',
-                                                       dm_sent=False, processed_by='bulk_sync')
+                        await db.update_join_request_status(req['user_id'], chat_id, 'declined', processed_by='bulk_sync')
                         declined += 1
                     else:
                         failed += 1
