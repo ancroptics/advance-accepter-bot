@@ -42,8 +42,8 @@ class Bot:
 
         # Database
         self.db_pool = DatabasePool()
-        pool = await self.db_pool.connect()
-        self.db = DatabaseModels(pool)
+        await self.db_pool.connect()
+        self.db = DatabaseModels(self.db_pool)
         await self.db.run_migrations()
         logger.info('Database connected and migrated')
 
@@ -60,6 +60,7 @@ class Bot:
         await self.app.initialize()
         await self.app.start()
         try:
+            # CRITICAL: drop_pending_updates=False to catch join requests during downtime
             await self.app.updater.start_polling(
                 allowed_updates=[
                     "message", "edited_message", "callback_query",
@@ -128,7 +129,7 @@ class Bot:
             except Exception as e:
                 logger.error(f'Shutdown error: {e}')
         if self.db_pool:
-            await self.db_pool.disconnect()
+            await self.db_pool.close()
         logger.info('Shutdown complete')
 
 async def main():
