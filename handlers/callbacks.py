@@ -2,7 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
-from database.models import Database
+from database.models import DatabaseModels
 import config
 
 logger = logging.getLogger(__name__)
