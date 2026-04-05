@@ -19,10 +19,20 @@ class DatabaseModels:
             with open(MIGRATION_SQL_PATH, 'r') as f:
                 sql = f.read()
             await self.db.run_migration(sql)
+            # Run additional migrations
+            migration_002 = os.path.join(os.path.dirname(__file__), 'migrations', '002_fixes.sql')
+            if os.path.exists(migration_002):
+                with open(migration_002, 'r') as f:
+                    sql2 = f.read()
+                await self.db.run_migration(sql2)
             logger.info('Migrations complete')
         except Exception as e:
             logger.exception(f'Migration error: {e}')
             raise
+
+    async def create_tables(self):
+        """Alias for run_migrations."""
+        await self.run_migrations()
 
     async def upsert_owner(self, user_id, username=None, first_name=None, last_name=None):
         return await self.db.execute("""
@@ -124,6 +134,7 @@ class DatabaseModels:
             'cross_promo_enabled', 'cross_promo_category', 'cross_promo_text',
             'watermark_enabled', 'member_count', 'is_active', 'bot_is_admin',
             'pending_requests',
+            'force_sub_modes',
         }
         if key not in allowed:
             logger.warning(f'Attempted to update disallowed channel setting: {key}')
@@ -364,3 +375,29 @@ class DatabaseModels:
             ORDER BY request_time ASC
             LIMIT $2
         """, chat_id, limit)
+
+
+    # ===== FIX 2: Fetch all active channels for startup scan =====
+    async def fetch_all_active_channels(self):
+        return await self.db.fetch(
+            "SELECT * FROM managed_channels WHERE is_active = TRUE"
+        )
+
+    # ===== FIX 5: Platform settings for global watermark =====
+    async def get_platform_setting(self, key, default=''):
+        """Get a platform-wide setting."""
+        try:
+            row = await self.db.fetchrow(
+                "SELECT value FROM platform_settings WHERE key = $1", key
+            )
+            return row['value'] if row else default
+        except Exception:
+            return default
+
+    async def set_platform_setting(self, key, value):
+        """Set a platform-wide setting."""
+        await self.db.execute("""
+            INSERT INTO platform_settings (key, value, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+        """, key, str(value))
