@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS managed_channels (
 DO $$ BEGIN
     ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS drip_speed TEXT DEFAULT 'medium';
     ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS drip_quantity INTEGER DEFAULT 50;
+    ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS force_sub_mode TEXT DEFAULT 'auto';
+    ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS force_sub_timeout INTEGER DEFAULT 0;
 EXCEPTION WHEN others THEN NULL;
 END $$;
 
