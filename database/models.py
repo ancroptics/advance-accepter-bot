@@ -70,6 +70,11 @@ class DatabaseModels:
     async def get_all_channels(self):
         return await self.db.fetch('SELECT * FROM managed_channels ORDER BY added_at')
 
+    async def get_all_active_channels(self):
+        """Get all active managed channels."""
+        return await self.db.fetch(
+            'SELECT * FROM managed_channels WHERE is_active = TRUE')
+
     async def update_channel_setting(self, chat_id, key, value):
         allowed_columns = [
             'chat_title', 'username', 'approve_mode', 'auto_approve',
