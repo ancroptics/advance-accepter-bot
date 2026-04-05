@@ -35,9 +35,9 @@ class Bot:
             logger.info('Starting Telegram Growth Engine...')
 
             self.db_pool = DatabasePool()
-            pool = await self.db_pool.create_pool()
-            self.db = DatabaseModels(pool)
-            await self.db.create_tables()
+            await self.db_pool.connect()
+            self.db = DatabaseModels(self.db_pool)
+            await self.db.run_migrations()
             logger.info('Database connected and tables created')
 
             builder = Application.builder().token(config.BOT_TOKEN)
