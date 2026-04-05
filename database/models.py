@@ -7,293 +7,398 @@ logger = logging.getLogger(__name__)
 
 MIGRATION_SQL_PATH = os.path.join(os.path.dirname(__file__), 'migrations', '001_initial_schema.sql')
 
+
 class DatabaseModels:
     """Wraps all database operations for the bot."""
 
-    def __init__(self, pool):
-        self.pool = pool
+    def __init__(self, db_pool):
+        self.db = db_pool
 
     async def run_migrations(self):
-        """Run SQL migrations from file."""
         try:
-            if os.path.exists(MIGRATION_SQL_PATH):
-                with open(MIGRATION_SQL_PATH, 'r') as f:
-                    sql = f.read()
-                async with self.pool.acquire() as conn:
-                    await conn.execute(sql)
-                logger.info("Migrations completed successfully")
-            else:
-                logger.warning(f"Migration file not found: {MIGRATION_SQL_PATH}")
+            with open(MIGRATION_SQL_PATH, 'r') as f:
+                sql = f.read()
+            await self.db.run_migration(sql)
+            logger.info('Migrations complete')
         except Exception as e:
-            logger.error(f"Migration error: {e}")
+            logger.exception(f'Migration error: {e}')
             raise
 
-    # --- User operations ---
+    async def upsert_owner(self, user_id, username=None, first_name=None, last_name=None):
+        return await self.db.execute("""
+            INSERT INTO channel_owners (user_id, username, first_name, last_name, registered_at, last_active)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+                username = COALESCE($2, channel_owners.username),
+                first_name = COALESCE($3, channel_owners.first_name),
+                last_name = COALESCE($4, channel_owners.last_name),
+                last_active = NOW()
+        """, user_id, username, first_name, last_name)
 
-    async def upsert_user(self, user_id: int, username: str = None, first_name: str = None):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                INSERT INTO users (user_id, username, first_name)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (user_id) DO UPDATE
-                SET username = $2, first_name = $3
-            ''', user_id, username, first_name)
+    async def get_owner(self, user_id):
+        return await self.db.fetchrow('SELECT * FROM channel_owners WHERE user_id = $1', user_id)
 
-    async def get_user(self, user_id: int):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
-            return dict(row) if row else None
+    async def get_all_owners(self, limit=20):
+        return await self.db.fetch('SELECT * FROM channel_owners ORDER BY registered_at DESC LIMIT $1', limit)
 
-    async def get_all_users(self):
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('SELECT * FROM users ORDER BY created_at DESC')
-            return [dict(r) for r in rows]
+    async def upsert_end_user(self, user_id, username=None, first_name=None, last_name=None,
+                               language_code=None, source='organic', source_channel=None):
+        return await self.db.execute("""
+            INSERT INTO end_users (user_id, username, first_name, last_name, language_code, source, source_channel, first_seen_at, last_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+                username = COALESCE($2, end_users.username),
+                first_name = COALESCE($3, end_users.first_name),
+                last_name = COALESCE($4, end_users.last_name),
+                language_code = COALESCE($5, end_users.language_code),
+                last_active = NOW()
+        """, user_id, username, first_name, last_name, language_code, source, source_channel)
 
-    async def ban_user(self, user_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute('UPDATE users SET is_banned = TRUE WHERE user_id = $1', user_id)
+    async def get_end_user(self, user_id):
+        return await self.db.fetchrow('SELECT * FROM end_users WHERE user_id = $1', user_id)
 
-    async def unban_user(self, user_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute('UPDATE users SET is_banned = FALSE WHERE user_id = $1', user_id)
+    async def set_referrer(self, user_id, referrer_id):
+        return await self.db.execute(
+            'UPDATE end_users SET referrer_id = $2 WHERE user_id = $1 AND referrer_id IS NULL',
+            user_id, referrer_id)
 
-    async def is_banned(self, user_id: int):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval('SELECT is_banned FROM users WHERE user_id = $1', user_id)
+    async def award_referral_coins(self, user_id, coins):
+        return await self.db.execute(
+            'UPDATE end_users SET coins = coins + $2, referral_count = referral_count + 1 WHERE user_id = $1',
+            user_id, coins)
 
-    async def check_approval_limit(self, user_id: int):
-        """Check if user has reached monthly approval limit. Returns (remaining, limit)."""
-        from config import TIER_LIMITS
-        user = await self.get_user(user_id)
-        if not user:
-            return 0, 0
+    async def mark_user_blocked(self, user_id):
+        return await self.db.execute(
+            'UPDATE end_users SET has_blocked_bot = TRUE WHERE user_id = $1', user_id)
 
-        tier = user.get('tier', 'free')
-        limits = TIER_LIMITS.get(tier, TIER_LIMITS['free'])
-        max_approvals = limits['monthly_approvals']
+    async def ban_end_user(self, user_id, reason=None):
+        return await self.db.execute(
+            'UPDATE end_users SET is_banned = TRUE WHERE user_id = $1', user_id)
 
-        if max_approvals == -1:
-            return 999999, -1
+    async def unban_end_user(self, user_id):
+        return await self.db.execute(
+            'UPDATE end_users SET is_banned = FALSE WHERE user_id = $1', user_id)
 
-        # Reset monthly count if needed
-        today = date.today()
-        reset_date = user.get('approval_reset_date')
-        if not reset_date or reset_date.month != today.month:
-            async with self.pool.acquire() as conn:
-                await conn.execute('''
-                    UPDATE users SET monthly_approvals = 0, approval_reset_date = $1
-                    WHERE user_id = $2
-                ''', today, user_id)
-            return max_approvals, max_approvals
+    async def search_users(self, term):
+        like = f'%{term}%'
+        return await self.db.fetch("""
+            SELECT * FROM end_users
+            WHERE username ILIKE $1 OR first_name ILIKE $1 OR CAST(user_id AS TEXT) LIKE $1
+            LIMIT 20
+        """, like)
 
-        used = user.get('monthly_approvals', 0)
-        return max(0, max_approvals - used), max_approvals
+    async def get_top_referrers(self, limit=10):
+        return await self.db.fetch("""
+            SELECT user_id, username, first_name, coins, referral_count
+            FROM end_users WHERE referral_count > 0
+            ORDER BY referral_count DESC LIMIT $1
+        """, limit)
 
-    async def increment_approvals(self, user_id: int, count: int = 1):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                UPDATE users SET monthly_approvals = monthly_approvals + $1
-                WHERE user_id = $2
-            ''', count, user_id)
+    async def upsert_channel(self, chat_id, owner_id, chat_title=None, chat_username=None, chat_type='channel'):
+        return await self.db.execute("""
+            INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_username, chat_type, added_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+            ON CONFLICT (chat_id) DO UPDATE SET
+                chat_title = COALESCE($3, managed_channels.chat_title),
+                chat_username = COALESCE($4, managed_channels.chat_username),
+                owner_id = $2, is_active = TRUE, bot_is_admin = TRUE
+        """, chat_id, owner_id, chat_title, chat_username, chat_type)
 
-    # --- Channel operations ---
+    async def get_channel(self, chat_id):
+        return await self.db.fetchrow('SELECT * FROM managed_channels WHERE chat_id = $1', chat_id)
 
-    async def add_channel(self, chat_id: int, chat_title: str, owner_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                INSERT INTO channels (chat_id, chat_title, owner_id)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (chat_id) DO UPDATE
-                SET chat_title = $2
-            ''', chat_id, chat_title, owner_id)
+    async def get_owner_channels(self, owner_id):
+        return await self.db.fetch(
+            'SELECT * FROM managed_channels WHERE owner_id = $1 AND is_active = TRUE ORDER BY added_at', owner_id)
 
-    async def remove_channel(self, chat_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute('DELETE FROM channels WHERE chat_id = $1', chat_id)
+    async def get_all_channels(self, limit=20):
+        return await self.db.fetch('SELECT * FROM managed_channels ORDER BY added_at DESC LIMIT $1', limit)
 
-    async def get_channel(self, chat_id: int):
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow('SELECT * FROM channels WHERE chat_id = $1', chat_id)
-            return dict(row) if row else None
-
-    async def get_user_channels(self, owner_id: int):
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('SELECT * FROM channels WHERE owner_id = $1 ORDER BY created_at', owner_id)
-            return [dict(r) for r in rows]
-
-    async def get_all_channels(self):
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('SELECT * FROM channels ORDER BY created_at')
-            return [dict(r) for r in rows]
-
-    async def update_channel(self, chat_id: int, **kwargs):
-        if not kwargs:
+    async def update_channel_setting(self, chat_id, key, value):
+        allowed = {
+            'auto_approve', 'approve_mode', 'drip_rate', 'drip_interval',
+            'drip_speed', 'drip_quantity',
+            'welcome_dm_enabled', 'welcome_message', 'welcome_media_type', 'welcome_media_file_id',
+            'welcome_buttons_json', 'welcome_parse_mode', 'welcome_messages_i18n',
+            'force_subscribe_enabled', 'force_subscribe_channels',
+            'cross_promo_enabled', 'cross_promo_category', 'cross_promo_text',
+            'watermark_enabled', 'member_count', 'is_active', 'bot_is_admin',
+            'pending_requests',
+        }
+        if key not in allowed:
+            logger.warning(f'Attempted to update disallowed channel setting: {key}')
             return
-        set_clauses = []
-        values = []
-        for i, (k, v) in enumerate(kwargs.items(), 1):
-            set_clauses.append(f"{k} = ${i}")
-            values.append(v)
-        values.append(chat_id)
-        query = f"UPDATE channels SET {'%, '.join(set_clauses)} WHERE chat_id = ${len(values)}"
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, *values)
+        return await self.db.execute(
+            f'UPDATE managed_channels SET {key} = $2 WHERE chat_id = $1', chat_id, value)
 
-    async def get_channel_count_for_user(self, owner_id: int):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval('SELECT COUNT(*) FROM channels WHERE owner_id = $1', owner_id)
+    async def get_active_channel_count(self):
+        val = await self.db.fetchval('SELECT COUNT(*) FROM managed_channels WHERE is_active = TRUE')
+        return val or 0
 
-    async def clone_channel_settings(self, src_chat_id: int, dst_chat_id: int):
-        """Clone settings from one channel to another."""
-        src = await self.get_channel(src_chat_id)
-        if not src:
-            return False
-        await self.update_channel(
-            dst_chat_id,
-            approve_mode=src['approve_mode'],
-            drip_rate=src['drip_rate'],
-            drip_interval=src['drip_interval'],
-            dm_enabled=src['dm_enabled'],
-            dm_template=src['dm_template']
-        )
-        return True
+    async def get_total_channel_count(self):
+        val = await self.db.fetchval('SELECT COUNT(*) FROM managed_channels')
+        return val or 0
 
-    # --- Join request operations ---
+    async def save_join_request(self, user_id, chat_id, username=None, first_name=None, user_language=None):
+        return await self.db.execute("""
+            INSERT INTO join_requests (user_id, chat_id, username, first_name, user_language, request_time, status)
+            VALUES ($1, $2, $3, $4, $5, NOW(), 'pending')
+            ON CONFLICT (user_id, chat_id) DO UPDATE SET
+                status = 'pending', username = COALESCE($3, join_requests.username),
+                first_name = COALESCE($4, join_requests.first_name),
+                user_language = COALESCE($5, join_requests.user_language),
+                request_time = NOW()
+        """, user_id, chat_id, username, first_name, user_language)
 
-    async def add_join_request(self, chat_id: int, user_id: int, username: str = None, first_name: str = None):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                INSERT INTO join_requests (chat_id, user_id, username, first_name)
-                VALUES ($1, $2, $3, $4)
-            ''', chat_id, user_id, username, first_name)
-            # Update pending count
-            await conn.execute('''
-                UPDATE channels SET pending_requests = pending_requests + 1
-                WHERE chat_id = $1
-            ''', chat_id)
+    async def get_pending_count(self, chat_id):
+        val = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id)
+        return val or 0
 
-    async def approve_request(self, chat_id: int, user_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                UPDATE join_requests SET status = 'approved', processed_at = NOW()
-                WHERE chat_id = $1 AND user_id = $2 AND status = 'pending'
-            ''', chat_id, user_id)
-            await conn.execute('''
-                UPDATE channels SET
-                    pending_requests = GREATEST(pending_requests - 1, 0),
-                    total_approved = total_approved + 1
-                WHERE chat_id = $1
-            ''', chat_id)
-            # Update daily stats
-            await conn.execute('''
-                INSERT INTO daily_stats (chat_id, approved) VALUES ($1, 1)
-                ON CONFLICT (chat_id, stat_date) DO UPDATE SET approved = daily_stats.approved + 1
-            ''', chat_id)
+    async def get_pending_requests(self, chat_id, limit=100):
+        return await self.db.fetch("""
+            SELECT * FROM join_requests WHERE chat_id = $1 AND status = 'pending'
+            ORDER BY request_time LIMIT $2
+        """, chat_id, limit)
 
-    async def decline_request(self, chat_id: int, user_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                UPDATE join_requests SET status = 'declined', processed_at = NOW()
-                WHERE chat_id = $1 AND user_id = $2 AND status = 'pending'
-            ''', chat_id, user_id)
-            await conn.execute('''
-                UPDATE channels SET
-                    pending_requests = GREATEST(pending_requests - 1, 0),
-                    total_declined = total_declined + 1
-                WHERE chat_id = $1
-            ''', chat_id)
-            await conn.execute('''
-                INSERT INTO daily_stats (chat_id, declined) VALUES ($1, 1)
-                ON CONFLICT (chat_id, stat_date) DO UPDATE SET declined = daily_stats.declined + 1
-            ''', chat_id)
+    async def update_join_request_status(self, user_id, chat_id, status, processed_by='auto'):
+        return await self.db.execute("""
+            UPDATE join_requests SET status = $3, processed_at = NOW(), processed_by = $4
+            WHERE user_id = $1 AND chat_id = $2
+        """, user_id, chat_id, status, processed_by)
 
-    async def approve_batch_requests(self, chat_id: int, user_ids: list):
-        """Batch approve multiple requests."""
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                UPDATE join_requests SET status = 'approved', processed_at = NOW()
-                WHERE chat_id = $1 AND user_id = ANY($2::bigint[]) AND status = 'pending'
-            ''', chat_id, user_ids)
-            count = len(user_ids)
-            await conn.execute('''
-                UPDATE channels SET
-                    pending_requests = GREATEST(pending_requests - $1, 0),
-                    total_approved = total_approved + $1
-                WHERE chat_id = $2
-            ''', count, chat_id)
-            await conn.execute('''
-                INSERT INTO daily_stats (chat_id, approved) VALUES ($1, $2)
-                ON CONFLICT (chat_id, stat_date) DO UPDATE SET approved = daily_stats.approved + $2
-            ''', chat_id, count)
-            return count
+    async def update_join_request_after_approve(self, user_id, chat_id, dm_sent=False, dm_failed_reason=None, dm_message_id=None, processed_by='auto'):
+        return await self.db.execute("""
+            UPDATE join_requests SET status = 'approved', processed_at = NOW(),
+                dm_attempted = TRUE, dm_sent = $3, dm_failed_reason = $4
+            WHERE user_id = $1 AND chat_id = $2
+        """, user_id, chat_id, dm_sent, dm_failed_reason)
 
-    async def get_pending_requests(self, chat_id: int, limit: int = 50):
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT * FROM join_requests
-                WHERE chat_id = $1 AND status = 'pending'
-                ORDER BY created_at ASC
-                LIMIT $2
-            ''', chat_id, limit)
-            return [dict(r) for r in rows]
+    async def update_join_request_force_sub(self, user_id, chat_id, required):
+        return await self.db.execute("""
+            UPDATE join_requests SET force_sub_required = $3
+            WHERE user_id = $1 AND chat_id = $2
+        """, user_id, chat_id, required)
 
-    async def get_pending_count(self, chat_id: int):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval('''
-                SELECT COUNT(*) FROM join_requests
-                WHERE chat_id = $1 AND status = 'pending'
-            ''', chat_id)
+    async def update_force_sub_completed(self, user_id, chat_id):
+        return await self.db.execute("""
+            UPDATE join_requests SET force_sub_completed = TRUE, force_sub_completed_at = NOW()
+            WHERE user_id = $1 AND chat_id = $2
+        """, user_id, chat_id)
 
-    async def get_approved_users(self, chat_id: int):
-        """Get all approved user IDs for a channel."""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT DISTINCT user_id FROM join_requests
-                WHERE chat_id = $1 AND status = 'approved'
-            ''', chat_id)
-            return [r['user_id'] for r in rows]
+    async def update_channel_stats_after_batch(self, chat_id, approved, dm_sent, dm_failed):
+        return await self.db.execute("""
+            UPDATE managed_channels SET
+                total_approved = total_approved + $2,
+                total_dms_sent = total_dms_sent + $3,
+                total_dms_failed = total_dms_failed + $4
+            WHERE chat_id = $1
+        """, chat_id, approved, dm_sent, dm_failed)
 
-    async def export_requests_csv(self, chat_id: int):
-        """Export join requests as CSV string."""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT user_id, username, first_name, status, created_at, processed_at
-                FROM join_requests WHERE chat_id = $1
-                ORDER BY created_at DESC
-            ''', chat_id)
+    async def create_broadcast(self, owner_id, channel_id, content, content_type='text',
+                                media_file_id=None, target_segment='all'):
+        return await self.db.fetchval("""
+            INSERT INTO broadcasts (owner_id, channel_id, content, content_type, media_file_id,
+                target_segment, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, 'sending', NOW())
+            RETURNING broadcast_id
+        """, owner_id, channel_id, content, content_type, media_file_id, target_segment)
 
-        if not rows:
-            return None
+    async def update_broadcast_status(self, broadcast_id, status, sent=0, failed=0, blocked=0):
+        return await self.db.execute("""
+            UPDATE broadcasts SET status = $2, sent_count = $3, failed_count = $4, blocked_count = $5,
+                completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
+            WHERE broadcast_id = $1
+        """, broadcast_id, status, sent, failed, blocked)
 
-        lines = ['user_id,username,first_name,status,created_at,processed_at']
-        for r in rows:
-            lines.append(f"{r['user_id']},{r.get('username', '')},{r.get('first_name', '')},{r['status']},{r['created_at']},{r.get('processed_at', '')}")
-        return '\n'.join(lines)
+    async def get_owner_users(self, owner_id):
+        return await self.db.fetch("""
+            SELECT DISTINCT jr.user_id FROM join_requests jr
+            JOIN managed_channels mc ON mc.chat_id = jr.chat_id
+            WHERE mc.owner_id = $1 AND jr.status = 'approved'
+        """, owner_id)
 
-    # --- Stats ---
+    async def get_channel_users(self, chat_id):
+        return await self.db.fetch("""
+            SELECT DISTINCT user_id FROM join_requests
+            WHERE chat_id = $1 AND status = 'approved'
+        """, chat_id)
 
-    async def get_daily_stats(self, chat_id: int, days: int = 7):
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT * FROM daily_stats
-                WHERE chat_id = $1 AND stat_date >= CURRENT_DATE - $2
-                ORDER BY stat_date
-            ''', chat_id, timedelta(days=days))
-            return [dict(r) for r in rows]
+    async def get_owner_user_count(self, owner_id):
+        val = await self.db.fetchval("""
+            SELECT COUNT(DISTINCT jr.user_id) FROM join_requests jr
+            JOIN managed_channels mc ON mc.chat_id = jr.chat_id
+            WHERE mc.owner_id = $1 AND jr.status = 'approved'
+        """, owner_id)
+        return val or 0
 
-    async def get_global_stats(self):
-        """Get global stats for admin panel."""
-        async with self.pool.acquire() as conn:
-            stats = {}
-            stats['total_users'] = await conn.fetchval('SELECT COUNT(*) FROM users')
-            stats['total_channels'] = await conn.fetchval('SELECT COUNT(*) FROM channels')
-            stats['total_requests'] = await conn.fetchval('SELECT COUNT(*) FROM join_requests')
-            stats['total_approved'] = await conn.fetchval("SELECT COUNT(*) FROM join_requests WHERE status = 'approved'")
-            stats['total_pending'] = await conn.fetchval("SELECT COUNT(*) FROM join_requests WHERE status = 'pending'")
-            stats['today_approved'] = await conn.fetchval("SELECT COUNT(*) FROM join_requests WHERE status = 'approved' AND processed_at::date = CURRENT_DATE")
-            return stats
+    async def get_channel_user_count(self, chat_id):
+        val = await self.db.fetchval(
+            "SELECT COUNT(DISTINCT user_id) FROM join_requests WHERE chat_id = $1 AND status = 'approved'", chat_id)
+        return val or 0
 
-    async def close(self):
-        if self.pool:
-            await self.pool.close()
-            logger.info('Database connection closed')
+    async def create_clone(self, owner_id, bot_token, bot_username=None, bot_name=None):
+        return await self.db.fetchval("""
+            INSERT INTO bot_clones (owner_id, bot_token, bot_username, bot_first_name, is_active, created_at)
+            VALUES ($1, $2, $3, $4, FALSE, NOW())
+            RETURNING clone_id
+        """, owner_id, bot_token, bot_username, bot_name)
+
+    async def get_clone(self, clone_id):
+        return await self.db.fetchrow('SELECT * FROM bot_clones WHERE clone_id = $1', clone_id)
+
+    async def get_clone_by_token(self, token):
+        return await self.db.fetchrow('SELECT * FROM bot_clones WHERE bot_token = $1', token)
+
+    async def get_owner_clones(self, owner_id):
+        return await self.db.fetch('SELECT * FROM bot_clones WHERE owner_id = $1', owner_id)
+
+    async def get_all_clones(self):
+        return await self.db.fetch('SELECT * FROM bot_clones ORDER BY created_at DESC')
+
+    async def get_active_clones(self):
+        return await self.db.fetch('SELECT * FROM bot_clones WHERE is_active = TRUE')
+
+    async def update_clone_status(self, clone_id, is_active=None, error_msg=None):
+        if is_active is not None:
+            return await self.db.execute(
+                'UPDATE bot_clones SET is_active = $2, last_error = $3 WHERE clone_id = $1',
+                clone_id, is_active, error_msg)
+        if error_msg is not None:
+            return await self.db.execute(
+                'UPDATE bot_clones SET last_error = $2, error_count = error_count + 1 WHERE clone_id = $1',
+                clone_id, error_msg)
+
+    async def delete_clone(self, clone_id):
+        return await self.db.execute('DELETE FROM bot_clones WHERE clone_id = $1', clone_id)
+
+    async def get_active_clone_count(self):
+        val = await self.db.fetchval('SELECT COUNT(*) FROM bot_clones WHERE is_active = TRUE')
+        return val or 0
+
+    async def log_event(self, event_type, owner_id=None, channel_id=None, user_id=None, data=None):
+        return await self.db.execute("""
+            INSERT INTO analytics_events (event_type, owner_id, channel_id, user_id, data, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+        """, event_type, owner_id, channel_id, user_id, json.dumps(data) if data else None)
+
+    async def get_channel_analytics(self, chat_id, days=30):
+        """Return a summary dict with analytics for a channel."""
+        result = {}
+        result['total_requests'] = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1", chat_id) or 0
+        result['approved'] = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'approved'", chat_id) or 0
+        result['pending'] = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id) or 0
+        result['declined'] = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND status = 'declined'", chat_id) or 0
+        result['today'] = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND request_time::date = CURRENT_DATE", chat_id) or 0
+        result['this_week'] = await self.db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE chat_id = $1 AND request_time >= CURRENT_DATE - INTERVAL '7 days'", chat_id) or 0
+        return result
+
+    async def get_channel_analytics_timeseries(self, chat_id, days=30):
+        """Return raw timeseries data for charts."""
+        since = date.today() - timedelta(days=days)
+        return await self.db.fetch("""
+            SELECT DATE(created_at) as day, event_type, COUNT(*) as cnt
+            FROM analytics_events
+            WHERE channel_id = $1 AND created_at >= $2::date
+            GROUP BY day, event_type ORDER BY day
+        """, chat_id, since)
+
+    async def get_channel_export_data(self, chat_id):
+        return await self.db.fetch("""
+            SELECT user_id, username, first_name, status, request_time, processed_at, dm_sent
+            FROM join_requests WHERE chat_id = $1 ORDER BY request_time
+        """, chat_id)
+
+    async def get_platform_stats(self):
+        row = await self.db.fetchrow("""
+            SELECT
+                (SELECT COUNT(*) FROM channel_owners) as total_owners,
+                (SELECT COUNT(*) FROM managed_channels WHERE is_active = TRUE) as total_channels,
+                (SELECT COUNT(*) FROM bot_clones WHERE is_active = TRUE) as active_clones,
+                (SELECT COUNT(*) FROM end_users) as total_users,
+                (SELECT COUNT(*) FROM channel_owners WHERE tier != 'free') as premium_owners
+        """)
+        return row
+
+    async def get_templates(self, owner_id):
+        return await self.db.fetch(
+            'SELECT * FROM templates WHERE owner_id = $1 ORDER BY created_at', owner_id)
+
+    async def get_auto_post_groups(self, owner_id):
+        return await self.db.fetch(
+            'SELECT * FROM auto_post_groups WHERE owner_id = $1 AND is_active = TRUE', owner_id)
+
+    async def activate_premium(self, user_id, tier, days):
+        expires = datetime.utcnow() + timedelta(days=days)
+        await self.db.execute(
+            "UPDATE channel_owners SET tier = $2, last_active = NOW() WHERE user_id = $1",
+            user_id, tier)
+        return await self.db.execute("""
+            INSERT INTO payments (owner_id, amount, tier, duration_days, status, created_at, completed_at)
+            VALUES ($1, 0, $2, $3, 'completed', NOW(), NOW())
+        """, user_id, tier, days)
+
+    async def deactivate_premium(self, user_id):
+        return await self.db.execute(
+            "UPDATE channel_owners SET tier = 'free' WHERE user_id = $1", user_id)
+
+    async def get_drip_channels(self):
+        """Get all channels with drip mode enabled and pending requests."""
+        return await self.db.fetch("""
+            SELECT mc.*, (SELECT COUNT(*) FROM join_requests jr WHERE jr.chat_id = mc.chat_id AND jr.status = 'pending') as actual_pending
+            FROM managed_channels mc
+            WHERE mc.approve_mode = 'drip' AND mc.is_active = TRUE
+        """)
+
+    async def get_drip_batch(self, chat_id, limit):
+        """Get a batch of pending requests for drip approval."""
+        return await self.db.fetch("""
+            SELECT * FROM join_requests
+            WHERE chat_id = $1 AND status = 'pending'
+            ORDER BY request_time ASC
+            LIMIT $2
+        """, chat_id, limit)
+
+    async def get_all_active_channels(self):
+        """Get all active managed channels."""
+        return await self.db.fetch(
+            'SELECT * FROM managed_channels WHERE is_active = TRUE')
+
+    async def get_stale_pending_requests(self, chat_id, hours=48):
+        """Get pending requests older than X hours for cleanup."""
+        return await self.db.fetch("""
+            SELECT * FROM join_requests
+            WHERE chat_id = $1 AND status = 'pending'
+                AND request_time < NOW() - INTERVAL '1 hour' * $2
+            ORDER BY request_time ASC
+            LIMIT 200
+        """, chat_id, hours)
+
+    async def bulk_save_pending_requests(self, chat_id, users):
+        """Bulk insert detected pending requests (from sync)."""
+        if not users:
+            return 0
+        count = 0
+        for u in users:
+            try:
+                await self.db.execute("""
+                    INSERT INTO join_requests (user_id, chat_id, username, first_name, request_time, status)
+                    VALUES ($1, $2, $3, $4, NOW(), 'pending')
+                    ON CONFLICT (user_id, chat_id) DO NOTHING
+                """, u['user_id'], chat_id, u.get('username'), u.get('first_name'))
+                count += 1
+            except Exception:
+                pass
+        return count
+
+    async def get_pending_request_user_ids(self, chat_id):
+        """Get all pending user IDs for a channel."""
+        rows = await self.db.fetch(
+            "SELECT user_id FROM join_requests WHERE chat_id = $1 AND status = 'pending'", chat_id)
+        return [r['user_id'] for r in rows] if rows else []
