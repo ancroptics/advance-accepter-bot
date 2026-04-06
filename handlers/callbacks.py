@@ -1335,22 +1335,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import config as _cfg
             clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
             promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
+            premium_status = '\u2705 ON' if _cfg.ENABLE_PREMIUM else '\u274c OFF'
             wm_raw = await db.get_platform_setting('global_watermark_enabled', 'false')
             wm_on = wm_raw.lower() == 'true' if isinstance(wm_raw, str) else bool(wm_raw)
             wm_status = '\u2705 ON' if wm_on else '\u274c OFF'
             await query.edit_message_text(
                 '\u2699\ufe0f FEATURE TOGGLES\n\n'
+                f'\U0001f48e Premium Gate: {premium_status}\n'
                 f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
                 f'\U0001f504 Cross Promotion: {promo_status}\n'
                 f'\U0001f3a8 Global Watermark: {wm_status}\n\n'
-                'Toggle features on/off for the entire platform:',
+                'Toggle features on/off for the entire platform:\n'
+                '\u2139\ufe0f Premium OFF = everyone uses bot freely!',
                 reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f'\U0001f48e Premium: {premium_status}', callback_data='sa_toggle_premium')],
                     [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
                     [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
                     [InlineKeyboardButton(f'\U0001f3a8 Watermark: {wm_status}', callback_data='sa_toggle_watermark')],
                     [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
                 ])
             )
+
+        elif data == 'sa_toggle_premium':
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            import config as _cfg
+            _cfg.ENABLE_PREMIUM = not _cfg.ENABLE_PREMIUM
+            import os
+            os.environ['ENABLE_PREMIUM'] = str(_cfg.ENABLE_PREMIUM).lower()
+            status = 'ENABLED' if _cfg.ENABLE_PREMIUM else 'DISABLED (everyone is free!)'
+            await query.answer(f'Premium Gate {status}!', show_alert=True)
+            # Re-show feature toggles inline
+            await _show_feature_toggles(query, db)
 
         elif data == 'sa_toggle_cloning':
             if user_id not in __import__('config').SUPERADMIN_IDS:
@@ -1453,12 +1470,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ref_count = end_user.get('referral_count', 0) if end_user else 0
             bot_username = (await context.bot.get_me()).username
             ref_link = f'https://t.me/{bot_username}?start=ref_{user_id}'
+            # Calculate referral channel slots
+            refs_per_slot = getattr(config, 'REFERRALS_PER_SLOT', 3)
+            bonus_slots = ref_count // refs_per_slot
+            refs_to_next = refs_per_slot - (ref_count % refs_per_slot)
+            progress_bar = '\u2588' * (ref_count % refs_per_slot) + '\u2591' * refs_to_next
             await query.edit_message_text(
                 f'\U0001f517 REFERRAL PROGRAM\n\n'
                 f'Your referral link:\n{ref_link}\n\n'
                 f'\U0001f4b0 Coins: {coins}\n'
                 f'\U0001f465 Referrals: {ref_count}\n\n'
-                f'Share your link to earn coins!',
+                f'\U0001f4e2 CHANNEL SLOTS UNLOCKED\n'
+                f'\U0001f513 Bonus Slots: {bonus_slots}\n'
+                f'\U0001f4ca Progress to next slot: {progress_bar} ({ref_count % refs_per_slot}/{refs_per_slot})\n'
+                f'Refer {refs_to_next} more to unlock +1 channel slot!\n\n'
+                f'\u2139\ufe0f Every {refs_per_slot} referrals = 1 extra force sub channel slot',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton('\U0001f3c6 Leaderboard', callback_data='referral_leaderboard')],
                     [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]
@@ -1494,9 +1520,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      '\u2022 Force subscribe messages\n\n'
                      'Format: \u2014\u2014\u2014\u2014\u2014\n@yourusername')
             toggle_text = '\U0001f534 Disable' if wm_enabled else '\U0001f7e2 Enable'
+            wm_text = channel.get('watermark_text', '') or 'Not set'
+            wm_location = channel.get('watermark_location', 'bottom') or 'bottom'
+            text += (f'\n\nCustom Text: {wm_text}'
+                     f'\nLocation: {wm_location.title()}')
             wm_buttons = [
                 [InlineKeyboardButton(toggle_text, callback_data=f'toggle_watermark:{chat_id}')],
                 [InlineKeyboardButton('\u270f\ufe0f Edit Username', callback_data=f'edit_watermark:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4dd Edit Text', callback_data=f'edit_wm_text:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4cd Edit Location', callback_data=f'edit_wm_location:{chat_id}')],
                 [InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')],
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(wm_buttons))
@@ -1551,6 +1583,80 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton('\u274c Cancel', callback_data=f'watermark_settings:{chat_id}')]
                 ])
             )
+
+        elif data.startswith('edit_wm_text:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel or channel.get('owner_id') != user_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            context.user_data['editing_wm_text_for'] = chat_id
+            await query.edit_message_text(
+                '\U0001f4dd Send the custom watermark text:\n\n'
+                'This text appears above the @username in the watermark.\n'
+                'Example: Powered by, Managed by, Join us at\n\n'
+                'Send /cancel to abort.',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('\u274c Cancel', callback_data=f'watermark_settings:{chat_id}')]
+                ])
+            )
+
+        elif data.startswith('edit_wm_location:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel or channel.get('owner_id') != user_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            current_loc = channel.get('watermark_location', 'bottom') or 'bottom'
+            await query.edit_message_text(
+                f'\U0001f4cd WATERMARK LOCATION\n\n'
+                f'Current: {current_loc.title()}\n\n'
+                'Choose where the watermark appears:',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('\u2b07\ufe0f Bottom' + (' \u2705' if current_loc == 'bottom' else ''), callback_data=f'set_wm_loc:{chat_id}:bottom')],
+                    [InlineKeyboardButton('\u2b06\ufe0f Top' + (' \u2705' if current_loc == 'top' else ''), callback_data=f'set_wm_loc:{chat_id}:top')],
+                    [InlineKeyboardButton('\U0001f519 Back', callback_data=f'watermark_settings:{chat_id}')],
+                ])
+            )
+
+        elif data.startswith('set_wm_loc:'):
+            parts = data.split(':')
+            chat_id = int(parts[1])
+            location = parts[2]
+            channel = await db.get_channel(chat_id)
+            if not channel or channel.get('owner_id') != user_id:
+                await query.answer('Access denied', show_alert=True)
+                return
+            await db.update_channel_setting(chat_id, 'watermark_location', location)
+            await query.answer(f'Watermark location set to {location}!', show_alert=True)
+            # Re-show watermark settings
+            channel = await db.get_channel(chat_id)
+            wm_enabled = channel.get('watermark_enabled', False)
+            wm_username = channel.get('watermark_username', '')
+            status = '\U0001f7e2 Enabled' if wm_enabled else '\U0001f534 Disabled'
+            text = (f'\U0001f3a8 WATERMARK SETTINGS\n\n'
+                    f'Status: {status}\n')
+            if wm_username:
+                text += f'Username: @{wm_username}\n\n'
+            else:
+                text += f'Username: Not set\n\n'
+            text += ('The watermark appears at the bottom of:\n'
+                     '\u2022 Welcome DMs\n'
+                     '\u2022 Force subscribe messages\n\n'
+                     'Format: \u2014\u2014\u2014\u2014\u2014\n@yourusername')
+            wm_text = channel.get('watermark_text', '') or 'Not set'
+            wm_location = channel.get('watermark_location', 'bottom') or 'bottom'
+            text += (f'\n\nCustom Text: {wm_text}'
+                     f'\nLocation: {wm_location.title()}')
+            toggle_text = '\U0001f534 Disable' if wm_enabled else '\U0001f7e2 Enable'
+            wm_buttons = [
+                [InlineKeyboardButton(toggle_text, callback_data=f'toggle_watermark:{chat_id}')],
+                [InlineKeyboardButton('\u270f\ufe0f Edit Username', callback_data=f'edit_watermark:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4dd Edit Text', callback_data=f'edit_wm_text:{chat_id}')],
+                [InlineKeyboardButton('\U0001f4cd Edit Location', callback_data=f'edit_wm_location:{chat_id}')],
+                [InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(wm_buttons))
 
         elif data.startswith('cross_promo_setup:'):
             from handlers.cross_promo import show_cross_promo_menu

@@ -175,7 +175,18 @@ async def handle_text_input(update, context):
         await db.update_channel_setting(chat_id, 'watermark_enabled', True)
         await update.message.reply_text(
             f'\u2705 Watermark set to @{new_username}\n\nThis will appear on all welcome and force-sub messages.',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Watermark Settings', callback_data=f'watermark_settings:{chat_id}')]])
+        )
+        return
+
+    # Handle watermark custom text editing
+    if context.user_data.get('editing_wm_text_for'):
+        chat_id = context.user_data.pop('editing_wm_text_for')
+        new_text = update.message.text.strip()
+        await db.update_channel_setting(chat_id, 'watermark_text', new_text)
+        await update.message.reply_text(
+            f'\u2705 Watermark text updated to: {new_text}\n\nThis will appear above the @username in the watermark.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Watermark Settings', callback_data=f'watermark_settings:{chat_id}')]])
         )
         return
 

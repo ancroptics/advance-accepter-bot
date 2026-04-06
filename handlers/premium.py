@@ -87,7 +87,19 @@ async def handle_upgrade(update, context):
 
 
 def get_tier_features(tier):
+    # When premium is disabled globally, everyone gets premium features
+    if not getattr(config, 'ENABLE_PREMIUM', True):
+        return TIER_FEATURES.get('premium', TIER_FEATURES['free'])
     return TIER_FEATURES.get(tier, TIER_FEATURES['free'])
+
+
+def get_effective_tier(owner, user_id):
+    """Get effective tier considering premium toggle."""
+    if not getattr(config, 'ENABLE_PREMIUM', True):
+        return 'premium'  # Everyone is premium when disabled
+    if user_id in config.SUPERADMIN_IDS:
+        return 'superadmin'
+    return owner.get('tier', 'free') if owner else 'free'
 
 
 @superadmin_only

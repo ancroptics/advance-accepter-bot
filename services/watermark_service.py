@@ -16,7 +16,17 @@ async def get_watermark(db, chat_id):
         # Check per-channel watermark first
         if channel.get('watermark_enabled') and channel.get('watermark_username'):
             username = channel['watermark_username']
-            return f"\n\n{EM_DASH_LINE}\n@{username}"
+            custom_text = channel.get('watermark_text', '')
+            location = channel.get('watermark_location', 'bottom')
+            
+            # Build watermark line
+            wm_line = f"@{username}"
+            if custom_text:
+                wm_line = f"{custom_text}\n@{username}"
+            
+            watermark = f"\n\n{EM_DASH_LINE}\n{wm_line}"
+            # Return watermark - callers can check location via channel settings
+            return watermark
 
         # Check global watermark setting (superadmin)
         try:

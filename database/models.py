@@ -299,6 +299,17 @@ class DatabaseModels:
             UPDATE end_users SET coins = coins + $2 WHERE user_id = $1
         """, user_id, amount)
 
+
+    async def get_referral_bonus_slots(self, user_id):
+        """Get extra channel slots earned via referrals. Every 3 referrals = 1 slot."""
+        row = await self.db.fetchrow(
+            'SELECT referral_count FROM end_users WHERE user_id = $1', user_id)
+        if not row:
+            return 0
+        import config
+        refs_per_slot = getattr(config, 'REFERRALS_PER_SLOT', 3)
+        return (row['referral_count'] or 0) // refs_per_slot
+
     # ==================== DRIP MODE ====================
     async def get_drip_channels(self):
         return await self.db.fetch("""

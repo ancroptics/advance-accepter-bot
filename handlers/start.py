@@ -45,11 +45,19 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if existing and not existing.get('referrer_id'):
                     await db.set_referrer(user_id, referrer_id)
                     await db.award_referral_coins(referrer_id, config.DEFAULT_REFERRAL_COINS)
+                    # Check if referrer unlocked a new channel slot
+                    referrer_data = await db.get_end_user(referrer_id)
+                    ref_count = referrer_data.get('referral_count', 0) if referrer_data else 0
+                    refs_per_slot = getattr(config, 'REFERRALS_PER_SLOT', 3)
+                    slot_msg = ''
+                    if ref_count > 0 and ref_count % refs_per_slot == 0:
+                        bonus_slots = ref_count // refs_per_slot
+                        slot_msg = f'\n\n\U0001f513 NEW SLOT UNLOCKED! You now have {bonus_slots} bonus channel slot(s)!'
                     try:
                         await context.bot.send_message(
                             referrer_id,
                             f'\U0001f389 New referral! {user.first_name} joined via your link.\n'
-                            f'+{config.DEFAULT_REFERRAL_COINS} coins!'
+                            f'+{config.DEFAULT_REFERRAL_COINS} coins!{slot_msg}'
                         )
                     except Exception:
                         pass
