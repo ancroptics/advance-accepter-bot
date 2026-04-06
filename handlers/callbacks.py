@@ -846,7 +846,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.data = 'default_force_sub'
             await button_callback(update, context)
 
-                elif data == 'close':
+        elif data == 'close':
             await query.delete_message()
 
         elif data.startswith('channel:') or data.startswith('manage_channel:'):
