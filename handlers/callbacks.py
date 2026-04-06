@@ -1,6 +1,6 @@
 import logging
 import json
-from config import Config as config
+import config
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from handlers.admin_panel import show_dashboard
