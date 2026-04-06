@@ -44,6 +44,7 @@ async def show_dashboard(update, context, edit=False):
         [InlineKeyboardButton('\U0001f4e2 My Channels', callback_data='my_channels')],
         [InlineKeyboardButton('\U0001f4e9 Welcome Message', callback_data='default_welcome_msg'),
          InlineKeyboardButton('\U0001f512 Force Sub', callback_data='default_force_sub')],
+        [InlineKeyboardButton('\U0001f3a8 Watermark', callback_data='default_watermark')],
         [InlineKeyboardButton('\U0001f4e2 Broadcast', callback_data='broadcast'),
          InlineKeyboardButton('\U0001f4ca Analytics', callback_data='analytics_overview')],
         [InlineKeyboardButton('\U0001f4dd Templates', callback_data='templates_menu'),
