@@ -98,18 +98,7 @@ async def _resolve_channel_input(update, context):
     import re as _re
     msg = update.message
 
-    # Handle forwarded messages (public channels)
-    if msg.forward_from_chat:
-        try:
-            return await context.bot.get_chat(msg.forward_from_chat.id)
-        except Exception:
-            await msg.reply_text(
-                '\u274c Could not access the forwarded channel. Make sure the bot is a member.\n'
-                'Try sending the channel username or ID instead, or /cancel'
-            )
-            return None
-
-    # Handle forwarded messages from private channels (forward_origin with ChatOrigin)
+    # Handle forwarded messages via forward_origin (ptb v20+)
     if hasattr(msg, 'forward_origin') and msg.forward_origin:
         origin = msg.forward_origin
         # ChatOrigin type = 'channel' has chat attribute
@@ -130,6 +119,23 @@ async def _resolve_channel_input(update, context):
                 '\u2022 The channel ID (e.g. -1001234567890)\n'
                 '\u2022 Find it via @username_to_id_bot or similar\n\n'
                 'Or /cancel to abort.'
+            )
+            return None
+        # For other origin types, try to extract chat info
+        else:
+            await msg.reply_text(
+                '\u26a0\ufe0f Could not extract channel info from this forwarded message.\n\n'
+                'Please send the channel username or ID instead, or /cancel'
+            )
+            return None
+    # Legacy fallback for forward_from_chat (older ptb versions)
+    elif getattr(msg, 'forward_from_chat', None):
+        try:
+            return await context.bot.get_chat(msg.forward_from_chat.id)
+        except Exception:
+            await msg.reply_text(
+                '\u274c Could not access the forwarded channel. Make sure the bot is a member.\n'
+                'Try sending the channel username or ID instead, or /cancel'
             )
             return None
 

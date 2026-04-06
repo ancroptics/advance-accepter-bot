@@ -50,6 +50,8 @@ async def show_dashboard(update, context, edit=False):
         [InlineKeyboardButton('\U0001f4dd Templates', callback_data='templates_menu'),
          InlineKeyboardButton('\U0001f916 Auto Poster', callback_data='auto_poster_menu')],
     ])
+    if user_id in config.SUPERADMIN_IDS:
+        buttons.append([InlineKeyboardButton('🎨 Watermark', callback_data='default_watermark')])
     # Conditionally show Cross-Promo and Clone Bot based on feature flags
     row4 = []
     row4.append(InlineKeyboardButton('\U0001f517 Referral', callback_data='referral_info'))

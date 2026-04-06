@@ -130,6 +130,7 @@ class DatabaseModels:
             'cross_promo_enabled', 'referral_enabled',
             'welcome_messages_json', 'force_sub_timeout',
             'force_sub_mode',
+            'watermark_enabled', 'watermark_username', 'watermark_text', 'watermark_location',
             'is_active', 'bot_is_admin',
         ]
         if key not in allowed_columns:

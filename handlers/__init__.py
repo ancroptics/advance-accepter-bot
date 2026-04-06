@@ -215,6 +215,21 @@ async def handle_text_input(update, context):
         )
         return
 
+    # Handle global watermark username editing
+    if context.user_data.get('awaiting_watermark_username'):
+        context.user_data.pop('awaiting_watermark_username')
+        new_wm_username = update.message.text.strip().lstrip('@')
+        try:
+            await db.set_platform_setting('global_watermark_username', new_wm_username)
+            await update.message.reply_text(
+                f'\u2705 Global watermark username set to @{new_wm_username}',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Watermark Settings', callback_data='default_watermark')]])
+            )
+        except Exception as e:
+            logger.error(f'Failed to save watermark username: {e}')
+            await update.message.reply_text(f'\u274c Error: {e}')
+        return
+
     # Handle support username editing
     if context.user_data.get('awaiting_support_username'):
         context.user_data.pop('awaiting_support_username')

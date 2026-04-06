@@ -218,20 +218,34 @@ async def _approve_and_dm(join_request, user, chat, channel, db, context):
 
             # Build inline buttons
             reply_markup = None
+            btns_data = None
             if channel.get('welcome_buttons_json'):
                 try:
                     btns_data = channel['welcome_buttons_json']
                     if isinstance(btns_data, str):
-                        import json
-                        btns_data = json.loads(btns_data)
-                    if btns_data:
-                        button_rows = []
-                        for btn in btns_data:
-                            button_rows.append([InlineKeyboardButton(
-                                btn.get('text', 'Link'),
-                                url=btn.get('url', 'https://t.me')
-                            )])
-                        reply_markup = InlineKeyboardMarkup(button_rows)
+                        import json as _json_btns
+                        btns_data = _json_btns.loads(btns_data)
+                except Exception:
+                    btns_data = None
+            # Fallback to owner's default welcome buttons if channel has none
+            if not btns_data and channel.get('owner_id'):
+                try:
+                    import json as _json_btns2
+                    default_btns_raw = await db.get_platform_setting(
+                        f'owner_{channel["owner_id"]}_welcome_buttons', '[]'
+                    )
+                    btns_data = _json_btns2.loads(default_btns_raw) if isinstance(default_btns_raw, str) else default_btns_raw
+                except Exception:
+                    btns_data = None
+            if btns_data:
+                try:
+                    button_rows = []
+                    for btn in btns_data:
+                        button_rows.append([InlineKeyboardButton(
+                            btn.get('text', 'Link'),
+                            url=btn.get('url', 'https://t.me')
+                        )])
+                    reply_markup = InlineKeyboardMarkup(button_rows)
                 except Exception as e:
                     logger.warning(f'Error building welcome buttons: {e}')
 

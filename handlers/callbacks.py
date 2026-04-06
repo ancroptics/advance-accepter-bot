@@ -120,7 +120,7 @@ async def show_force_sub_settings(query, db, chat_id):
     )])
 
     buttons.append([InlineKeyboardButton('\u2795 Add Channel', callback_data=f'add_force_sub_ch:{chat_id}')])
-    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')])
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='default_force_sub')])
 
     try:
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1417,8 +1417,62 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await db.set_platform_setting('global_watermark_enabled', 'true' if new_wm else 'false')
             status = 'ENABLED' if new_wm else 'DISABLED'
             await query.answer(f'Global Watermark {status}!', show_alert=True)
-            # Re-show feature toggles inline
-            await _show_feature_toggles(query, db)
+            # Re-show watermark settings
+            context.user_data['_reroute_data'] = 'default_watermark'
+            await button_callback(update, context)
+
+
+        elif data == 'default_watermark':
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Only superadmin can access watermark settings', show_alert=True)
+                return
+            # Show global watermark settings
+            wm_raw = await db.get_platform_setting('global_watermark_enabled', 'false')
+            wm_on = wm_raw.lower() == 'true' if isinstance(wm_raw, str) else bool(wm_raw)
+            wm_status = '\U0001f7e2 Enabled' if wm_on else '\U0001f534 Disabled'
+            global_wm_username = await db.get_platform_setting('global_watermark_username', '') or 'Not set'
+            text = (f'\U0001f3a8 GLOBAL WATERMARK SETTINGS\n\n'
+                    f'Status: {wm_status}\n'
+                    f'Username: @{global_wm_username}\n\n'
+                    f'This watermark appears at the bottom of welcome messages.')
+            toggle_text = '\U0001f534 Disable' if wm_on else '\U0001f7e2 Enable'
+            buttons = [
+                [InlineKeyboardButton(toggle_text, callback_data='sa_toggle_watermark')],
+                [InlineKeyboardButton('\u270f\ufe0f Edit Username', callback_data='sa_edit_watermark_username')],
+                [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data == 'sa_watermark_settings':
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            # Same as default_watermark
+            wm_raw = await db.get_platform_setting('global_watermark_enabled', 'false')
+            wm_on = wm_raw.lower() == 'true' if isinstance(wm_raw, str) else bool(wm_raw)
+            wm_status = '\U0001f7e2 Enabled' if wm_on else '\U0001f534 Disabled'
+            global_wm_username = await db.get_platform_setting('global_watermark_username', '') or 'Not set'
+            text = (f'\U0001f3a8 GLOBAL WATERMARK SETTINGS\n\n'
+                    f'Status: {wm_status}\n'
+                    f'Username: @{global_wm_username}\n\n'
+                    f'This watermark appears at the bottom of welcome messages.')
+            toggle_text = '\U0001f534 Disable' if wm_on else '\U0001f7e2 Enable'
+            buttons = [
+                [InlineKeyboardButton(toggle_text, callback_data='sa_toggle_watermark')],
+                [InlineKeyboardButton('\u270f\ufe0f Edit Username', callback_data='sa_edit_watermark_username')],
+                [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+        elif data == 'sa_edit_watermark_username':
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            context.user_data['awaiting_watermark_username'] = True
+            await query.edit_message_text(
+                '\u270f\ufe0f Send the username for the global watermark (without @):',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\u274c Cancel', callback_data='default_watermark')]])
+            )
 
         elif data == 'sa_edit_upi':
             context.user_data['awaiting_upi_input'] = True
