@@ -57,7 +57,7 @@ def register_handlers(application):
     force_sub_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(force_sub_entry, pattern=r'^add_force_sub_ch:')],
         states={
-            FORCE_SUB_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_force_sub_channel_input)],
+            FORCE_SUB_INPUT: [MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.FORWARDED, handle_force_sub_channel_input)],
         },
         fallbacks=[
             CommandHandler('cancel', _cancel_handler),
