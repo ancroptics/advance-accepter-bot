@@ -117,7 +117,7 @@ async def sa_full_analytics(update, context):
 async def sa_manage_owners(update, context):
     query = update.callback_query
     db = context.application.bot_data.get('db')
-    owners = await db.get_all_owners(limit=20)
+    owners = await db.get_all_owners()
     text = '\U0001f465 Channel Owners:\n\n'
     for o in (owners or []):
         text += f"ID: {o['user_id']} | @{o.get('username', 'N/A')} | {o.get('tier', 'free')}\n"
@@ -172,7 +172,7 @@ async def sa_edit_support_username(update, context):
 async def sa_manage_subscriptions(update, context):
     query = update.callback_query
     db = context.application.bot_data.get('db')
-    owners = await db.get_all_owners(limit=50)
+    owners = await db.get_all_owners()
     text = '\U0001f48e MANAGE PREMIUM\n\nTap on a user to activate/deactivate premium:\n\n'
     buttons = []
     for o in (owners or []):
