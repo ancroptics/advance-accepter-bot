@@ -171,3 +171,161 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.chat_join_request.approve()
         except Exception:
             pass
+
+async def _approve_and_dm(join_request, user, chat, channel, db, context):
+    """Send welcome DM first, then approve the request"""
+    chat_id = chat.id
+    user_id = user.id
+    dm_sent = False
+    dm_failed_reason = None
+    dm_message_id = None
+
+    # Step 5: Send Welcome DM
+    if channel.get('welcome_dm_enabled', True):
+        try:
+            # Get welcome message (check multi-language first)
+            welcome_text = get_welcome_for_language(
+                channel, user.language_code
+            )
+            if not welcome_text:
+                welcome_text = channel.get('welcome_message', 'Welcome to {channel_name}! \U0001f389')
+
+            # Replace variables
+            welcome_text = welcome_text.replace('{first_name}', user.first_name or 'there')
+            welcome_text = welcome_text.replace('{last_name}', user.last_name or '')
+            welcome_text = welcome_text.replace('{username}', f'@{user.username}' if user.username else 'there')
+            welcome_text = welcome_text.replace('{user_id}', str(user_id))
+            welcome_text = welcome_text.replace('{channel_name}', chat.title or '')
+            welcome_text = welcome_text.replace('{channel_username}', f'@{chat.username}' if chat.username else '')
+            welcome_text = welcome_text.replace('{member_count}', str(channel.get('member_count', 0)))
+            welcome_text = welcome_text.replace('{referral_link}', f'https://t.me/{config.BOT_USERNAME}?start=ref_{user_id}')
+
+            # Get user coins
+            end_user = await db.get_end_user(user_id)
+            coins = end_user.get('coins', 0) if end_user else 0
+            welcome_text = welcome_text.replace('{coins}', str(coins))
+            welcome_text = welcome_text.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
+
+            # Add watermark
+            watermark = await get_watermark(db, chat_id)
+            welcome_text += watermark
+
+            # Add cross-promotion
+            if config.ENABLE_CROSS_PROMO:
+                cross_promo = await get_cross_promo_text(db, chat_id, channel.get('owner_id'))
+                if cross_promo:
+                    welcome_text += cross_promo
+
+            # Build inline buttons
+            reply_markup = None
+            if channel.get('welcome_buttons_json'):
+                try:
+                    btns_data = channel['welcome_buttons_json']
+                    if isinstance(btns_data, str):
+                        import json
+                        btns_data = json.loads(btns_data)
+                    if btns_data:
+                        button_rows = []
+                        for btn in btns_data:
+                            button_rows.append([InlineKeyboardButton(
+                                btn.get('text', 'Link'),
+                                url=btn.get('url', 'https://t.me')
+                            )])
+                        reply_markup = InlineKeyboardMarkup(button_rows)
+                except Exception as e:
+                    logger.warning(f'Error building welcome buttons: {e}')
+
+            # Send the DM - try with HTML first, fallback to plain text
+            media_type = channel.get('welcome_media_type')
+            media_fid = channel.get('welcome_media_file_id')
+            sent_msg = None
+
+            async def _send_dm(parse_mode_val):
+                """Helper to send DM with given parse mode."""
+                nonlocal sent_msg
+                if media_type == 'photo' and media_fid:
+                    sent_msg = await context.bot.send_photo(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                elif media_type == 'video' and media_fid:
+                    sent_msg = await context.bot.send_video(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                elif media_type == 'animation' and media_fid:
+                    sent_msg = await context.bot.send_animation(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                elif media_type == 'document' and media_fid:
+                    sent_msg = await context.bot.send_document(
+                        user_id, media_fid, caption=welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+                else:
+                    sent_msg = await context.bot.send_message(
+                        user_id, welcome_text,
+                        parse_mode=parse_mode_val, reply_markup=reply_markup
+                    )
+
+            try:
+                await _send_dm('HTML')
+                dm_sent = True
+                dm_message_id = sent_msg.message_id if sent_msg else None
+            except Exception as e1:
+                err_str = str(e1).lower()
+                if "can't parse" in err_str or 'parse entities' in err_str or 'bad request' in err_str:
+                    # HTML parse error - retry without parse_mode
+                    try:
+                        await _send_dm(None)
+                        dm_sent = True
+                        dm_message_id = sent_msg.message_id if sent_msg else None
+                    except Exception as e2:
+                        logger.warning(f'Welcome DM retry without HTML also failed to {user_id}: {e2}')
+                        dm_failed_reason = 'error'
+                elif 'forbidden' in err_str or 'blocked' in err_str or 'chat not found' in err_str:
+                    dm_failed_reason = 'blocked'
+                    try:
+                        await db.mark_user_blocked(user_id)
+                    except Exception:
+                        pass
+                else:
+                    dm_failed_reason = str(e1)[:200]
+                if not dm_sent:
+                    logger.warning(f'DM failed to {user_id}: {e1}')
+
+        except Exception as e:
+            dm_failed_reason = str(e)[:200]
+            logger.warning(f'DM failed to {user_id}: {e}')
+
+    # Step 6: Approve the join request
+    try:
+        await join_request.approve()
+    except Exception as e:
+        logger.error(f'Failed to approve join request {user_id} in {chat_id}: {e}')
+
+    # Update database
+    try:
+        await db.update_join_request_after_approve(
+            user_id=user_id,
+            chat_id=chat_id,
+            dm_sent=dm_sent,
+            dm_failed_reason=dm_failed_reason,
+            dm_message_id=dm_message_id,
+            processed_by='auto',
+        )
+    except Exception as e:
+        logger.error(f'Error updating join request after approve: {e}')
+
+    # Step 7: Log analytics event
+    try:
+        await db.log_event(
+            'join_request_processed',
+            owner_id=channel.get('owner_id'),
+            channel_id=chat_id,
+            user_id=user_id,
+            data={'dm_sent': dm_sent, 'approval_mode': 'instant'}
+        )
+    except Exception as e:
+        logger.error(f'Error logging analytics: {e}')
