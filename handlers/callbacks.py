@@ -82,6 +82,92 @@ async def show_force_sub_settings(query, db, chat_id):
             raise
 
 
+
+async def show_welcome_settings(query, db, chat_id):
+    """Show advanced welcome message settings (like force sub settings)."""
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await query.edit_message_text('Channel not found.')
+        return
+
+    welcome_dm = channel.get('welcome_dm_enabled', True)
+    welcome_msg = channel.get('welcome_message', '') or 'Welcome to {channel_name}! \U0001f389'
+    media_type = channel.get('welcome_media_type', '')
+    parse_mode = channel.get('welcome_parse_mode', 'HTML')
+
+    # Get welcome channels (buttons)
+    welcome_channels_raw = channel.get('welcome_buttons_json') or '[]'
+    if isinstance(welcome_channels_raw, str):
+        try:
+            welcome_channels = json.loads(welcome_channels_raw)
+        except (ValueError, TypeError):
+            welcome_channels = []
+    elif isinstance(welcome_channels_raw, list):
+        welcome_channels = welcome_channels_raw
+    else:
+        welcome_channels = []
+
+    status = '\U0001f7e2 Enabled' if welcome_dm else '\U0001f534 Disabled'
+
+    text = (f'\U0001f4dd WELCOME MESSAGE SETTINGS\n\n'
+            f'Status: {status}\n'
+            f'Parse Mode: {parse_mode}\n')
+    if media_type:
+        text += f'Media: {media_type}\n'
+
+    text += f'\n\u2501\u2501\u2501 Message Preview \u2501\u2501\u2501\n\n'
+
+    # Show truncated preview
+    preview = welcome_msg[:200]
+    if len(welcome_msg) > 200:
+        preview += '...'
+    text += f'{preview}\n\n'
+
+    text += f'\u2501\u2501\u2501 Channel Buttons ({len(welcome_channels)}) \u2501\u2501\u2501\n\n'
+
+    buttons = []
+
+    if welcome_channels:
+        for i, ch in enumerate(welcome_channels, 1):
+            title = ch.get('text', ch.get('title', 'Unknown'))
+            text += f"{i}. {title} \u2705\n"
+            buttons.append([InlineKeyboardButton(
+                f'\u274c Remove {title[:20]}',
+                callback_data=f"remove_welcome_ch:{chat_id}:{i-1}"
+            )])
+    else:
+        text += 'No channel buttons configured.\n'
+        text += '(Add channels to show as buttons in welcome DM)\n'
+
+    text += (f'\n\u2501\u2501\u2501 Variables \u2501\u2501\u2501\n'
+             f'{{first_name}}, {{username}}, {{channel_name}},\n'
+             f'{{member_count}}, {{referral_link}}, {{coins}}, {{date}}\n')
+
+    # Toggle button
+    toggle_text = '\U0001f534 Disable' if welcome_dm else '\U0001f7e2 Enable'
+    buttons.append([InlineKeyboardButton(toggle_text, callback_data=f'toggle_welcome_dm:{chat_id}')])
+
+    # Edit & Preview buttons
+    buttons.append([
+        InlineKeyboardButton('\u270f\ufe0f Edit Message', callback_data=f'edit_welcome:{chat_id}'),
+        InlineKeyboardButton('\U0001f440 Preview', callback_data=f'preview_welcome:{chat_id}'),
+    ])
+
+    # Add channel button
+    buttons.append([InlineKeyboardButton('\u2795 Add Channel Button', callback_data=f'add_welcome_ch:{chat_id}')])
+
+    # Media button
+    buttons.append([InlineKeyboardButton('\U0001f4f7 Set Media', callback_data=f'set_welcome_media:{chat_id}')])
+
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'manage_channel:{chat_id}')])
+
+    try:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        if 'message is not modified' not in str(e).lower():
+            raise
+
+
 async def show_channel_settings(query, db, chat_id, user_id, context=None):
     """Show detailed settings for a specific channel."""
     channel = await db.get_channel(chat_id)
@@ -132,7 +218,7 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     fsub_icon = '\u2705' if force_sub else '\u274c'
     buttons.append([
         InlineKeyboardButton(f'{fsub_icon} Force Sub', callback_data=f'toggle_force_sub:{chat_id}'),
-        InlineKeyboardButton('\U0001f4dd Edit Welcome', callback_data=f'edit_welcome:{chat_id}'),
+        InlineKeyboardButton('\U0001f4dd Welcome Msg', callback_data=f'welcome_settings:{chat_id}'),
     ])
     if force_sub:
         buttons.append([InlineKeyboardButton('\u2699\ufe0f Force Sub Settings', callback_data=f'force_sub_settings:{chat_id}')])
@@ -439,7 +525,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             channel = await db.get_channel(chat_id)
             current = channel.get('welcome_dm_enabled', True)
             await db.update_channel_setting(chat_id, 'welcome_dm_enabled', not current)
-            await show_channel_settings(query, db, chat_id, user_id, context)
+            await show_welcome_settings(query, db, chat_id)
 
         elif data.startswith('toggle_auto_approve:'):
             chat_id = int(data.split(':')[1])
@@ -494,6 +580,67 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton('Cancel', callback_data=f'channel:{chat_id}')]
                 ])
             )
+
+        elif data.startswith('welcome_settings:'):
+            chat_id = int(data.split(':')[1])
+            await show_welcome_settings(query, db, chat_id)
+
+        elif data.startswith('remove_welcome_ch:'):
+            parts = data.split(':')
+            parent_chat_id = int(parts[1])
+            remove_idx = int(parts[2])
+            channel = await db.get_channel(parent_chat_id)
+            welcome_channels_raw = channel.get('welcome_buttons_json') or '[]'
+            if isinstance(welcome_channels_raw, str):
+                try:
+                    welcome_channels = json.loads(welcome_channels_raw)
+                except (ValueError, TypeError):
+                    welcome_channels = []
+            elif isinstance(welcome_channels_raw, list):
+                welcome_channels = welcome_channels_raw
+            else:
+                welcome_channels = []
+            if 0 <= remove_idx < len(welcome_channels):
+                removed = welcome_channels.pop(remove_idx)
+                await db.update_channel_setting(parent_chat_id, 'welcome_buttons_json', json.dumps(welcome_channels))
+                await query.answer(f"Removed {removed.get('text', 'channel')}", show_alert=True)
+            await show_welcome_settings(query, db, parent_chat_id)
+
+        elif data.startswith('preview_welcome:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            if not channel:
+                await query.edit_message_text('Channel not found.')
+            else:
+                welcome_msg = channel.get('welcome_message', '') or 'Welcome to {channel_name}! \U0001f389'
+                preview = welcome_msg.replace('{first_name}', query.from_user.first_name or 'there')
+                preview = preview.replace('{last_name}', query.from_user.last_name or '')
+                preview = preview.replace('{username}', f'@{query.from_user.username}' if query.from_user.username else 'there')
+                preview = preview.replace('{user_id}', str(query.from_user.id))
+                preview = preview.replace('{channel_name}', channel.get('chat_title', 'Channel'))
+                preview = preview.replace('{channel_username}', f'@{channel.get("chat_username", "")}')
+                preview = preview.replace('{member_count}', str(channel.get('member_count', 0)))
+                preview = preview.replace('{coins}', '0')
+                from datetime import datetime
+                preview = preview.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
+                preview = preview.replace('{referral_link}', f'https://t.me/bot?start=ref_{query.from_user.id}')
+                # Build preview buttons
+                welcome_channels_raw = channel.get('welcome_buttons_json') or '[]'
+                if isinstance(welcome_channels_raw, str):
+                    try:
+                        welcome_btns = json.loads(welcome_channels_raw)
+                    except (ValueError, TypeError):
+                        welcome_btns = []
+                elif isinstance(welcome_channels_raw, list):
+                    welcome_btns = welcome_channels_raw
+                else:
+                    welcome_btns = []
+                btn_rows = []
+                for btn in welcome_btns:
+                    btn_rows.append([InlineKeyboardButton(btn.get('text', 'Link'), url=btn.get('url', 'https://t.me'))])
+                btn_rows.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'welcome_settings:{chat_id}')])
+                text = f"\U0001f440 WELCOME MESSAGE PREVIEW\n\n{preview}\n\n(This is how the welcome DM will look)"
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(btn_rows))
 
         elif data.startswith('force_sub_settings:'):
             chat_id = int(data.split(':')[1])

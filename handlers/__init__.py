@@ -60,6 +60,28 @@ def register_handlers(application):
     )
     application.add_handler(force_sub_conv)
 
+    # 5b. Welcome channel button input conversation handler
+    from handlers.welcome_dm import handle_welcome_channel_input, start_add_welcome_channel, WELCOME_CH_INPUT
+
+    async def welcome_ch_entry(update, context):
+        query = update.callback_query
+        data = query.data
+        chat_id = int(data.split(':')[1])
+        await query.answer()
+        return await start_add_welcome_channel(update, context, chat_id)
+
+    welcome_ch_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(welcome_ch_entry, pattern=r'^add_welcome_ch:')],
+        states={
+            WELCOME_CH_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_welcome_channel_input)],
+        },
+        fallbacks=[
+            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+        ],
+        per_message=False,
+    )
+    application.add_handler(welcome_ch_conv)
+
     # 6. Callback query handler (catch-all for buttons)
     application.add_handler(CallbackQueryHandler(callback_router))
 
@@ -82,7 +104,7 @@ async def handle_text_input(update, context):
         await db.update_channel_setting(chat_id, 'welcome_message', new_msg)
         await update.message.reply_text(
             f'\u2705 Welcome message updated!\n\nPreview:\n{new_msg}',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Welcome Settings', callback_data=f'welcome_settings:{chat_id}')]])
         )
         return
 

@@ -81,7 +81,6 @@ class DatabaseModels:
             INSERT INTO managed_channels (chat_id, owner_id, chat_title, chat_username, chat_type, is_active, bot_is_admin, added_at)
             VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
             ON CONFLICT (chat_id) DO UPDATE SET
-                owner_id = $2,
                 chat_title = COALESCE($3, managed_channels.chat_title),
                 chat_username = COALESCE($4, managed_channels.chat_username),
                 chat_type = $5, is_active = TRUE, bot_is_admin = TRUE
