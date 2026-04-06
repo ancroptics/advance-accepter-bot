@@ -259,8 +259,10 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     wm_row = []
     if user_id in config.SUPERADMIN_IDS:
         wm_row.append(InlineKeyboardButton('\U0001f3a8 Watermark', callback_data=f'watermark_settings:{chat_id}'))
-    wm_row.append(InlineKeyboardButton('\U0001f504 Cross Promo', callback_data=f'cross_promo_setup:{chat_id}'))
-    buttons.append(wm_row)
+    if config.ENABLE_CROSS_PROMO:
+        wm_row.append(InlineKeyboardButton('\U0001f504 Cross Promo', callback_data=f'cross_promo_setup:{chat_id}'))
+    if wm_row:
+        buttons.append(wm_row)
     buttons.append([
         InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
