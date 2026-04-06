@@ -82,6 +82,26 @@ def register_handlers(application):
     )
     application.add_handler(welcome_ch_conv)
 
+    # 5c. Default welcome button conversation handler (dashboard-level)
+    from handlers.welcome_dm import handle_default_welcome_btn_input, start_add_default_welcome_btn, DEFAULT_WELCOME_BTN_INPUT
+
+    async def default_welcome_btn_entry(update, context):
+        query = update.callback_query
+        await query.answer()
+        return await start_add_default_welcome_btn(update, context)
+
+    default_welcome_btn_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(default_welcome_btn_entry, pattern=r'^add_default_welcome_btn$')],
+        states={
+            DEFAULT_WELCOME_BTN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_default_welcome_btn_input)],
+        },
+        fallbacks=[
+            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+        ],
+        per_message=False,
+    )
+    application.add_handler(default_welcome_btn_conv)
+
     # 6. Callback query handler (catch-all for buttons)
     application.add_handler(CallbackQueryHandler(callback_router))
 
