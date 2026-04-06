@@ -28,16 +28,7 @@ async def show_dashboard(update, context, edit=False):
         else:
             await update.effective_message.reply_text(text)
         return
-    all_ch = await db.get_owner_channels(user_id)
-    # Verify: only show channels where user is actually admin/creator
-    channels = []
-    for ch in (all_ch or []):
-        try:
-            member = await context.bot.get_chat_member(ch['chat_id'], update.effective_user.id)
-            if member.status in ('administrator', 'creator'):
-                channels.append(ch)
-        except Exception:
-            channels.append(ch)  # Can't verify, still show
+    channels = await db.get_owner_channels(user_id)
     tier = owner.get('tier', 'free').upper()
     text = f'\U0001f4ca GROWTH ENGINE DASHBOARD\n\n\U0001f44b Hey {update.effective_user.first_name}!\n\U0001f3f7\ufe0f Plan: {tier}\n\n\u2501\u2501\u2501 YOUR CHANNELS \u2501\u2501\u2501\n\n'
     buttons = []
@@ -194,46 +185,22 @@ async def sa_manage_subscriptions(update, context):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def show_my_channels(update, context):
-    """Show only channels where the user is actually an admin/creator (verified via Telegram API)."""
+    """Show all channels owned by this user."""
     query = update.callback_query
     user_id = query.from_user.id
     db = context.application.bot_data.get('db')
     if not db:
         await query.edit_message_text('Bot is still initializing...')
         return
-    # Get all active channels managed by the bot
-    all_channels = await db.get_all_active_channels()
-    # Verify each channel: user must be admin or creator
-    verified_channels = []
-    for ch in (all_channels or []):
-        try:
-            member = await context.bot.get_chat_member(ch['chat_id'], user_id)
-            if member.status in ('administrator', 'creator'):
-                verified_channels.append(ch)
-                # Auto-fix owner_id if user is creator but DB has wrong owner
-                if member.status == 'creator' and ch.get('owner_id') != user_id:
-                    try:
-                        await db.add_channel(
-                            chat_id=ch['chat_id'],
-                            owner_id=user_id,
-                            chat_title=ch.get('chat_title'),
-                            chat_type=ch.get('chat_type', 'channel'),
-                            username=ch.get('chat_username')
-                        )
-                        logger.info(f'Fixed owner_id for channel {ch["chat_id"]} to {user_id}')
-                    except Exception as e:
-                        logger.error(f'Failed to fix owner_id: {e}')
-        except Exception:
-            # Can\'t verify - skip (don\'t show unverifiable channels)
-            pass
-    if not verified_channels:
+    channels = await db.get_owner_channels(user_id)
+    if not channels:
         text = '\U0001f4e2 MY CHANNELS\n\nNo channels connected yet!\n\nAdd this bot as admin to your channel and it will be detected automatically.'
         buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
         return
     text = '\U0001f4e2 MY CHANNELS\n\n'
     buttons = []
-    for ch in verified_channels:
+    for ch in channels:
         status = '\u2705' if ch.get('is_active', True) else '\u274c'
         auto = 'Auto-approve ON' if ch.get('auto_approve') else 'Manual'
         text += f"{status} {ch['chat_title']}\n"
