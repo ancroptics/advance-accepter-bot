@@ -245,3 +245,135 @@ async def handle_welcome_channel_input(update, context):
         logger.error(f'Error in welcome channel input: {e}')
         await update.message.reply_text(f'\u274c Error: {e}\nPlease try again or /cancel')
         return WELCOME_CH_INPUT
+
+
+DEFAULT_WELCOME_BTN_INPUT = 300
+
+async def start_add_default_welcome_btn(update, context):
+    """Start adding a channel button to the default welcome message."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    context.user_data['adding_default_welcome_btn'] = True
+    context.user_data['default_welcome_btn_owner'] = user_id
+    await query.edit_message_text(
+        '\U0001f4dd ADD CHANNEL BUTTON\n\n'
+        'Send the channel username or ID to add as a button in the welcome DM:\n\n'
+        'Examples:\n'
+        '\u2022 @mychannel\n'
+        '\u2022 -1001234567890\n\n'
+        'The channel will appear as a clickable button in welcome messages '
+        'for ALL enabled channels.\n\n'
+        'Send /cancel to abort.'
+    )
+    return DEFAULT_WELCOME_BTN_INPUT
+
+
+async def handle_default_welcome_btn_input(update, context):
+    """Handle channel input for default welcome buttons."""
+    text = update.message.text.strip()
+    db = context.application.bot_data.get('db')
+    user_id = context.user_data.get('default_welcome_btn_owner')
+
+    if not user_id:
+        await update.message.reply_text('\u274c Session expired. Please try again from dashboard.')
+        return ConversationHandler.END
+
+    if text == '/cancel':
+        context.user_data.pop('adding_default_welcome_btn', None)
+        context.user_data.pop('default_welcome_btn_owner', None)
+        await update.message.reply_text(
+            'Cancelled.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='default_welcome_msg')]])
+        )
+        return ConversationHandler.END
+
+    try:
+        import json as _json
+
+        if text.startswith('@'):
+            channel_ref = text
+        elif text.startswith('-100'):
+            channel_ref = int(text)
+        elif text.isdigit():
+            channel_ref = int('-100' + text)
+        else:
+            channel_ref = '@' + text
+
+        try:
+            chat_info = await context.bot.get_chat(channel_ref)
+        except Exception:
+            await update.message.reply_text(
+                '\u274c Could not find that channel. Make sure:\n'
+                '1. The channel/group exists\n'
+                '2. The bot is a member of that channel\n'
+                '3. You entered the correct username or ID\n\n'
+                'Send the channel username (e.g. @mychannel) or /cancel'
+            )
+            return DEFAULT_WELCOME_BTN_INPUT
+
+        # Get current default welcome buttons
+        try:
+            btns_row = await db.pool.fetchrow(
+                "SELECT value FROM platform_settings WHERE key = $1",
+                f'owner_{user_id}_welcome_buttons'
+            )
+            current_btns = _json.loads(btns_row['value']) if btns_row else []
+        except Exception:
+            current_btns = []
+
+        # Check duplicate
+        for btn in current_btns:
+            if btn.get('chat_id') == chat_info.id:
+                await update.message.reply_text(
+                    f'\u26a0\ufe0f {chat_info.title} is already in the welcome buttons list!',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='default_welcome_msg')]])
+                )
+                return ConversationHandler.END
+
+        # Build URL
+        if chat_info.username:
+            url = f'https://t.me/{chat_info.username}'
+        elif hasattr(chat_info, 'invite_link') and chat_info.invite_link:
+            url = chat_info.invite_link
+        else:
+            try:
+                url = (await context.bot.create_chat_invite_link(chat_info.id)).invite_link
+            except Exception:
+                url = f'https://t.me/c/{str(chat_info.id)[4:]}'
+
+        new_entry = {
+            'chat_id': chat_info.id,
+            'text': f'\U0001f4e2 Join {chat_info.title}',
+            'title': chat_info.title,
+            'url': url,
+        }
+        current_btns.append(new_entry)
+
+        # Save to platform_settings
+        await db.pool.execute(
+            "INSERT INTO platform_settings (key, value) VALUES ($1, $2) "
+            "ON CONFLICT (key) DO UPDATE SET value = $2",
+            f'owner_{user_id}_welcome_buttons', _json.dumps(current_btns)
+        )
+
+        # Sync to all enabled channels
+        channels = await db.get_owner_channels(user_id)
+        for ch in (channels or []):
+            full_ch = await db.get_channel(ch['chat_id'])
+            if full_ch and full_ch.get('welcome_dm_enabled'):
+                await db.update_channel_setting(ch['chat_id'], 'welcome_buttons_json', _json.dumps(current_btns))
+
+        context.user_data.pop('adding_default_welcome_btn', None)
+        context.user_data.pop('default_welcome_btn_owner', None)
+        await update.message.reply_text(
+            f'\u2705 Added {chat_info.title} as a welcome button!\n\n'
+            f'Users will see a "{new_entry["text"]}" button in their welcome DM '
+            f'for all enabled channels.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f4e9 Welcome Settings', callback_data='default_welcome_msg')]])
+        )
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f'Error in default welcome btn input: {e}')
+        await update.message.reply_text(f'\u274c Error: {e}\nPlease try again or /cancel')
+        return DEFAULT_WELCOME_BTN_INPUT
