@@ -55,7 +55,7 @@ async def _show_default_force_sub(update, context):
     context.user_data.pop('_reroute_data', None)
 
 
-async def show_force_sub_settings(query, db, chat_id, origin='channel'):
+async def show_force_sub_settings(query, db, chat_id):
     """Show force subscribe channel settings."""
     channel = await db.get_channel(chat_id)
     if not channel:
@@ -120,8 +120,7 @@ async def show_force_sub_settings(query, db, chat_id, origin='channel'):
     )])
 
     buttons.append([InlineKeyboardButton('\u2795 Add Channel', callback_data=f'add_force_sub_ch:{chat_id}')])
-    back_cb = 'default_force_sub' if origin == 'dashboard' else f'channel:{chat_id}'
-    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=back_cb)])
+    buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data=f'channel:{chat_id}')])
 
     try:
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -202,14 +201,8 @@ async def show_welcome_settings(query, db, chat_id):
         InlineKeyboardButton('\U0001f440 Preview', callback_data=f'preview_welcome:{chat_id}'),
     ])
 
-    # Add channel button - controlled by add_channel_btn_mode setting
-    btn_mode = await db.get_platform_setting('add_channel_btn_mode', 'superadmin_only')
-    show_add_btn = False
-    if btn_mode == 'global':
-        show_add_btn = True
-    elif btn_mode == 'superadmin_only' and user_id in config.SUPERADMIN_IDS:
-        show_add_btn = True
-    if show_add_btn:
+    # Add channel button
+    if user_id in config.SUPERADMIN_IDS:
         buttons.append([InlineKeyboardButton('\u2795 Add Channel Button', callback_data=f'add_welcome_ch:{chat_id}')])
 
     # Media button
@@ -378,7 +371,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    data = query.data
+    data = context.user_data.pop('_reroute_data', None) or query.data
     user_id = query.from_user.id
     db = context.application.bot_data.get('db')
 
@@ -547,21 +540,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton('\u270f\ufe0f Edit Message', callback_data='edit_default_welcome'),
                 InlineKeyboardButton('\U0001f440 Preview', callback_data='preview_default_welcome'),
             ])
-            btn_mode = await db.get_platform_setting('add_channel_btn_mode', 'superadmin_only')
-            show_add_btn = False
-            if btn_mode == 'global':
-                show_add_btn = True
-            elif btn_mode == 'superadmin_only' and user_id in config.SUPERADMIN_IDS:
-                show_add_btn = True
-            if show_add_btn:
+            if user_id in config.SUPERADMIN_IDS:
                 buttons.append([
                     InlineKeyboardButton('\u2795 Add Channel Button', callback_data='add_default_welcome_btn'),
-                ])
-            if user_id in config.SUPERADMIN_IDS:
-                mode_labels = {'superadmin_only': '🔒 Superadmin Only', 'global': '🌐 Global (All Users)'}
-                current_label = mode_labels.get(btn_mode, btn_mode)
-                buttons.append([
-                    InlineKeyboardButton(f'📌 Channel Btn: {current_label}', callback_data='toggle_add_channel_btn_mode'),
                 ])
             for i, btn in enumerate(welcome_btns):
                 title = btn.get('text', btn.get('title', 'Unknown'))[:20]
@@ -812,7 +793,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 title = ch.get('chat_title', 'Unknown')[:20]
                 buttons.append([
                     InlineKeyboardButton(f'{icon} {title}', callback_data=f'toggle_force_sub:{ch["chat_id"]}'),
-                    InlineKeyboardButton('\u2699\ufe0f Settings', callback_data=f'force_sub_settings:{ch["chat_id"]}:dashboard'),
+                    InlineKeyboardButton('\u2699\ufe0f Settings', callback_data=f'force_sub_settings:{ch["chat_id"]}'),
                 ])
             buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
             await query.edit_message_text(
@@ -1085,10 +1066,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(btn_rows))
 
         elif data.startswith('force_sub_settings:'):
-            parts = data.split(':')
-            chat_id = int(parts[1])
-            origin = parts[2] if len(parts) > 2 else 'channel'
-            await show_force_sub_settings(query, db, chat_id, origin=origin)
+            chat_id = int(data.split(':')[1])
+            await show_force_sub_settings(query, db, chat_id)
 
         elif data.startswith('fsub_mode:'):
             parts = data.split(':')
@@ -1441,99 +1420,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Re-show feature toggles inline
             await _show_feature_toggles(query, db)
 
-        elif data == 'toggle_add_channel_btn_mode':
-            if user_id not in config.SUPERADMIN_IDS:
-                await query.answer('Superadmin only!', show_alert=True)
-                return
-            current = await db.get_platform_setting('add_channel_btn_mode', 'superadmin_only')
-            # Cycle: superadmin_only -> global -> superadmin_only
-            new_mode = 'global' if current == 'superadmin_only' else 'superadmin_only'
-            await db.set_platform_setting('add_channel_btn_mode', new_mode)
-            mode_labels = {'superadmin_only': '🔒 Superadmin Only', 'global': '🌐 Global (All Users)'}
-            await query.answer(f'Channel Button: {mode_labels[new_mode]}', show_alert=True)
-            context.user_data['_reroute_data'] = 'default_welcome_msg'
-            await button_callback(update, context)
-            return
-
-        elif data == 'default_watermark':
-            # Dashboard-level watermark settings for all channels
-            channels = await db.get_owner_channels(user_id)
-            ch_count = len(channels) if channels else 0
-            enabled_count = 0
-            for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
-                if full_ch and full_ch.get('watermark_enabled'):
-                    enabled_count += 1
-
-            all_enabled = enabled_count == ch_count and ch_count > 0
-            status = '\U0001f7e2 Enabled' if all_enabled else ('\U0001f7e1 Partial' if enabled_count > 0 else '\U0001f534 Disabled')
-
-            # Get global watermark username
-            global_wm_username = await db.get_platform_setting(f'owner_{user_id}_watermark_username', '')
-
-            text = (
-                f'\U0001f3a8 WATERMARK SETTINGS (All Channels)\n\n'
-                f'Status: {status} ({enabled_count}/{ch_count} channels)\n'
-            )
-            if global_wm_username:
-                text += f'Default Username: @{global_wm_username}\n'
-            text += (
-                '\nThe watermark appears at the bottom of:\n'
-                '\u2022 Welcome DMs\n'
-                '\u2022 Force subscribe messages\n\n'
-                'Toggle per channel or enable/disable all:\n'
-            )
-
-            toggle_text = '\U0001f534 Disable All' if all_enabled else '\U0001f7e2 Enable All'
-            buttons = [
-                [InlineKeyboardButton(toggle_text, callback_data='toggle_all_watermark')],
-            ]
-            for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
-                wm_on = full_ch.get('watermark_enabled', False) if full_ch else False
-                icon = '\u2705' if wm_on else '\u274c'
-                title = ch.get('chat_title', 'Unknown')[:20]
-                buttons.append([
-                    InlineKeyboardButton(f'{icon} {title}', callback_data=f'toggle_watermark_ch:{ch["chat_id"]}'),
-                    InlineKeyboardButton('\u2699\ufe0f Settings', callback_data=f'watermark_settings:{ch["chat_id"]}'),
-                ])
-            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-        elif data == 'toggle_all_watermark':
-            channels = await db.get_owner_channels(user_id)
-            if not channels:
-                await query.answer('No channels found!', show_alert=True)
-                return
-            all_enabled = True
-            for ch in channels:
-                full_ch = await db.get_channel(ch['chat_id'])
-                if not full_ch or not full_ch.get('watermark_enabled'):
-                    all_enabled = False
-                    break
-            new_state = not all_enabled
-            for ch in channels:
-                await db.update_channel_setting(ch['chat_id'], 'watermark_enabled', new_state)
-            status = 'ENABLED' if new_state else 'DISABLED'
-            await query.answer(f'Watermark {status} for all channels!', show_alert=True)
-            context.user_data['_reroute_data'] = 'default_watermark'
-            await button_callback(update, context)
-            return
-
-        elif data.startswith('toggle_watermark_ch:'):
-            chat_id = int(data.split(':')[1])
-            channel = await db.get_channel(chat_id)
-            if not channel:
-                await query.answer('Channel not found', show_alert=True)
-                return
-            current = channel.get('watermark_enabled', False)
-            await db.update_channel_setting(chat_id, 'watermark_enabled', not current)
-            status = 'ENABLED' if not current else 'DISABLED'
-            await query.answer(f'Watermark {status}!', show_alert=True)
-            context.user_data['_reroute_data'] = 'default_watermark'
-            await button_callback(update, context)
-            return
-
         elif data == 'sa_edit_upi':
             context.user_data['awaiting_upi_input'] = True
             await query.edit_message_text(
@@ -1697,9 +1583,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      '• Force subscribe messages\n\n'
                      'Format: —————\n@yourusername')
             toggle_text = '🔴 Disable' if wm_enabled else '🟢 Enable'
+            wm_text = channel.get('watermark_text', '') or 'Not set'
+            wm_location = channel.get('watermark_location', 'bottom') or 'bottom'
+            text += (f'\n\nCustom Text: {wm_text}'
+                     f'\nLocation: {wm_location.title()}')
             wm_buttons = [
                 [InlineKeyboardButton(toggle_text, callback_data=f'toggle_watermark:{chat_id}')],
                 [InlineKeyboardButton('✏️ Edit Username', callback_data=f'edit_watermark:{chat_id}')],
+                [InlineKeyboardButton('📝 Edit Text', callback_data=f'edit_wm_text:{chat_id}')],
+                [InlineKeyboardButton('📍 Edit Location', callback_data=f'edit_wm_location:{chat_id}')],
                 [InlineKeyboardButton('🔙 Back', callback_data=f'manage_channel:{chat_id}')],
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(wm_buttons))

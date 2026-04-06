@@ -98,7 +98,7 @@ async def _resolve_channel_input(update, context):
     import re as _re
     msg = update.message
 
-    # Handle forwarded messages
+    # Handle forwarded messages (public channels)
     if msg.forward_from_chat:
         try:
             return await context.bot.get_chat(msg.forward_from_chat.id)
@@ -109,10 +109,52 @@ async def _resolve_channel_input(update, context):
             )
             return None
 
+    # Handle forwarded messages from private channels (forward_origin with ChatOrigin)
+    if hasattr(msg, 'forward_origin') and msg.forward_origin:
+        origin = msg.forward_origin
+        # ChatOrigin type = 'channel' has chat attribute
+        if hasattr(origin, 'type') and origin.type == 'channel' and hasattr(origin, 'chat'):
+            try:
+                return await context.bot.get_chat(origin.chat.id)
+            except Exception:
+                await msg.reply_text(
+                    '\u274c Could not access the forwarded channel. Make sure the bot is a member.\n'
+                    'Try sending the channel username or ID instead, or /cancel'
+                )
+                return None
+        # If it's a hidden user forward or other type, the chat info isn't available
+        elif hasattr(origin, 'type') and origin.type in ('hidden_user', 'user'):
+            await msg.reply_text(
+                '\u26a0\ufe0f This forwarded message doesn\'t contain channel info.\n\n'
+                'For private channels, please send:\n'
+                '\u2022 The channel ID (e.g. -1001234567890)\n'
+                '\u2022 Find it via @username_to_id_bot or similar\n\n'
+                'Or /cancel to abort.'
+            )
+            return None
+
     text = (msg.text or '').strip()
     if not text:
-        await msg.reply_text('Please send a channel username, ID, or forward a message from the channel.')
+        await msg.reply_text(
+            'Please send a channel username, ID, or forward a message from the channel.\n\n'
+            '\U0001f4a1 For private channels: send the channel ID (e.g. -1001234567890)'
+        )
         return None
+
+    # Handle private channel links (t.me/c/XXXX/YYY)
+    private_match = _re.match(r'https?://t\.me/c/(\d+)(?:/\d+)?', text)
+    if private_match:
+        channel_id = int('-100' + private_match.group(1))
+        try:
+            return await context.bot.get_chat(channel_id)
+        except Exception:
+            await msg.reply_text(
+                '\u274c Could not access this private channel. Make sure:\n'
+                '1. The bot is added as admin to this channel\n'
+                '2. The channel ID is correct\n\n'
+                'Try sending the channel ID directly (e.g. -1001234567890) or /cancel'
+            )
+            return None
 
     # Handle invite links (t.me/+xxx or t.me/joinchat/xxx)
     invite_match = _re.match(r'https?://t\.me/(\+[\w-]+|joinchat/[\w-]+)', text)
@@ -168,7 +210,6 @@ async def handle_force_sub_channel_input(update, context):
     try:
         chat_info = await _resolve_channel_input(update, context)
         if not chat_info:
-            return FORCE_SUB_INPUT
             return FORCE_SUB_INPUT
 
         # Verify bot is admin in the force sub channel (needed to check member status)
@@ -301,30 +342,12 @@ async def start_add_default_fsub_channel(update, context):
 async def handle_default_fsub_channel_input(update, context):
     """Handle channel username/ID input for default force subscribe setup."""
     import json as _json
-    text = update.message.text.strip()
     db = context.application.bot_data.get('db')
     user_id = update.effective_user.id
 
     try:
-        if text.startswith('@'):
-            channel_username = text
-        elif text.startswith('-100'):
-            channel_username = int(text)
-        elif text.isdigit():
-            channel_username = int('-100' + text)
-        else:
-            channel_username = '@' + text
-
-        try:
-            chat_info = await context.bot.get_chat(channel_username)
-        except Exception:
-            await update.message.reply_text(
-                '\u274c Could not find that channel. Make sure:\n'
-                '1. The channel/group exists\n'
-                '2. The bot is a member of that channel\n'
-                '3. You entered the correct username or ID\n\n'
-                'Send the channel username (e.g. @mychannel) or /cancel'
-            )
+        chat_info = await _resolve_channel_input(update, context)
+        if not chat_info:
             return DEFAULT_FSUB_INPUT
 
         # Verify bot is admin in the force sub channel
