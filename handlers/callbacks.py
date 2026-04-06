@@ -256,10 +256,11 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
         ])
         if mode == 'drip':
             buttons.append([InlineKeyboardButton('\U0001f4a7 Drip Settings', callback_data=f'drip_settings:{chat_id}')])
-    buttons.append([
-        InlineKeyboardButton('\U0001f3a8 Watermark', callback_data=f'watermark_settings:{chat_id}'),
-        InlineKeyboardButton('\U0001f504 Cross Promo', callback_data=f'cross_promo_setup:{chat_id}'),
-    ])
+    wm_row = []
+    if user_id in config.SUPERADMIN_IDS:
+        wm_row.append(InlineKeyboardButton('\U0001f3a8 Watermark', callback_data=f'watermark_settings:{chat_id}'))
+    wm_row.append(InlineKeyboardButton('\U0001f504 Cross Promo', callback_data=f'cross_promo_setup:{chat_id}'))
+    buttons.append(wm_row)
     buttons.append([
         InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
@@ -1502,9 +1503,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('watermark_settings:'):
             chat_id = int(data.split(':')[1])
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Only superadmin can edit watermark settings', show_alert=True)
+                return
             channel = await db.get_channel(chat_id)
-            if not channel or channel.get('owner_id') != user_id:
-                await query.answer('Access denied', show_alert=True)
+            if not channel:
+                await query.answer('Channel not found', show_alert=True)
                 return
             wm_enabled = channel.get('watermark_enabled', False)
             wm_username = channel.get('watermark_username', '')
@@ -1535,8 +1539,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('toggle_watermark:'):
             chat_id = int(data.split(':')[1])
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Only superadmin can edit watermark settings', show_alert=True)
+                return
             channel = await db.get_channel(chat_id)
-            if not channel or channel.get('owner_id') != user_id:
+            if not channel:
                 await query.answer('Access denied', show_alert=True)
                 return
             current = channel.get('watermark_enabled', False)
@@ -1570,8 +1577,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('edit_watermark:'):
             chat_id = int(data.split(':')[1])
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Only superadmin can edit watermark settings', show_alert=True)
+                return
             channel = await db.get_channel(chat_id)
-            if not channel or channel.get('owner_id') != user_id:
+            if not channel:
                 await query.answer('Access denied', show_alert=True)
                 return
             context.user_data['editing_watermark_for'] = chat_id
@@ -1586,8 +1596,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('edit_wm_text:'):
             chat_id = int(data.split(':')[1])
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Only superadmin can edit watermark settings', show_alert=True)
+                return
             channel = await db.get_channel(chat_id)
-            if not channel or channel.get('owner_id') != user_id:
+            if not channel:
                 await query.answer('Access denied', show_alert=True)
                 return
             context.user_data['editing_wm_text_for'] = chat_id
@@ -1603,8 +1616,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('edit_wm_location:'):
             chat_id = int(data.split(':')[1])
+            if user_id not in config.SUPERADMIN_IDS:
+                await query.answer('Only superadmin can edit watermark settings', show_alert=True)
+                return
             channel = await db.get_channel(chat_id)
-            if not channel or channel.get('owner_id') != user_id:
+            if not channel:
                 await query.answer('Access denied', show_alert=True)
                 return
             current_loc = channel.get('watermark_location', 'bottom') or 'bottom'

@@ -315,6 +315,36 @@ async def handle_default_fsub_channel_input(update, context):
             'username': chat_info.username or '',
             'url': f'https://t.me/{chat_info.username}' if chat_info.username else '',
         }
+
+        # Check channel slot limit (base from tier + referral bonus)
+        import config as _cfg
+        owner = await db.get_owner(user_id)
+        if _cfg.ENABLE_PREMIUM:
+            from handlers.premium import get_tier_features
+            tier = owner.get('tier', 'free') if owner else 'free'
+            if user_id in _cfg.SUPERADMIN_IDS:
+                tier = 'business'
+            features = get_tier_features(tier)
+            base_slots = features.get('max_channels', 1)
+        else:
+            base_slots = 999  # No limit when premium is off
+        bonus_slots = await db.get_referral_bonus_slots(user_id)
+        max_slots = base_slots + bonus_slots
+        if len(default_fsub) >= max_slots:
+            refs_per_slot = getattr(_cfg, 'REFERRALS_PER_SLOT', 3)
+            await update.message.reply_text(
+                f'\u26a0\ufe0f You\'ve reached your default force sub channel limit ({max_slots} slots).\n\n'
+                f'\U0001f513 Base slots: {base_slots} (from your plan)\n'
+                f'\U0001f517 Bonus slots: {bonus_slots} (from referrals)\n\n'
+                f'Refer {refs_per_slot} people to unlock +1 slot!\n'
+                f'Use /start to get your referral link.',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('\U0001f517 Referral Program', callback_data='referral_info')],
+                    [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]
+                ])
+            )
+            return ConversationHandler.END
+
         default_fsub.append(new_entry)
         await db.set_platform_setting(f'owner_{user_id}_default_fsub_channels', _json.dumps(default_fsub))
 

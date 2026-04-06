@@ -58,8 +58,10 @@ async def show_dashboard(update, context, edit=False):
     row5 = []
     if config.ENABLE_CLONING:
         row5.append(InlineKeyboardButton('\U0001f9ec Clone Bot', callback_data='clone_bot_menu'))
-    row5.append(InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info'))
-    buttons.append(row5)
+    if config.ENABLE_PREMIUM:
+        row5.append(InlineKeyboardButton('\U0001f48e Premium', callback_data='premium_info'))
+    if row5:
+        buttons.append(row5)
     buttons.extend([
         [InlineKeyboardButton('\U0001f4ac Support', callback_data='edit_support_overview'),
          InlineKeyboardButton('\u2699\ufe0f Settings', callback_data='settings'),
