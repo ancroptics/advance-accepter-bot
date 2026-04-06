@@ -4,47 +4,52 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Core
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-DATABASE_URL = os.getenv('DATABASE_URL')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+SUPERADMIN_IDS = [int(x.strip()) for x in os.getenv('SUPERADMIN_IDS', '').split(',') if x.strip()]
+BOT_USERNAME = os.getenv('BOT_USERNAME', '')
+BOT_DISPLAY_NAME = os.getenv('BOT_DISPLAY_NAME', 'Growth Engine')
+SUPPORT_USERNAME = os.getenv('SUPPORT_USERNAME', '')
 
-# Superadmin IDs (comma-separated)
-SUPERADMIN_IDS = [
-    int(x) for x in os.getenv('SUPERADMIN_IDS', '').split(',') if x.strip()
-]
+# Database
+DATABASE_URL = os.getenv('DATABASE_URL', '')
 
-# Rate Limiting
+# Deployment
+PORT = int(os.getenv('PORT', '10000'))
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', '')
+USE_WEBHOOK = os.getenv('USE_WEBHOOK', 'true').lower() == 'true'
+
+# Defaults
+DEFAULT_REFERRAL_COINS = int(os.getenv('DEFAULT_REFERRAL_COINS', '10'))
+REFERRALS_PER_SLOT = int(os.getenv('REFERRALS_PER_SLOT', '3'))
+DEFAULT_BROADCAST_RATE = int(os.getenv('DEFAULT_BROADCAST_RATE', '25'))
 DEFAULT_APPROVE_RATE = int(os.getenv('DEFAULT_APPROVE_RATE', '2'))
 MAX_FREE_CHANNELS = int(os.getenv('MAX_FREE_CHANNELS', '1'))
 MAX_PREMIUM_CHANNELS = int(os.getenv('MAX_PREMIUM_CHANNELS', '5'))
 MAX_BUSINESS_CHANNELS = int(os.getenv('MAX_BUSINESS_CHANNELS', '999'))
 
-# Broadcast
-MAX_BROADCAST_PER_DAY = int(os.getenv('MAX_BROADCAST_PER_DAY', '3'))
-
 # Premium
-PREMIUM_PAYMENT_UPI_ID = os.getenv('PREMIUM_PAYMENT_UPI_ID', '')
-PREMIUM_MONTHLY_PRICE = int(os.getenv('PREMIUM_MONTHLY_PRICE', '99'))
-PREMIUM_YEARLY_PRICE = int(os.getenv('PREMIUM_YEARLY_PRICE', '999'))
+PREMIUM_PRICE_MONTHLY = int(os.getenv('PREMIUM_PRICE_MONTHLY', '199'))
+BUSINESS_PRICE_MONTHLY = int(os.getenv('BUSINESS_PRICE_MONTHLY', '499'))
 
-# Referral
-DEFAULT_REFERRAL_COINS = int(os.getenv('DEFAULT_REFERRAL_COINS', '10'))
-REFERRALS_PER_SLOT = int(os.getenv('REFERRALS_PER_SLOT', '3'))
+# Clone
+MAX_FREE_CLONES = int(os.getenv('MAX_FREE_CLONES', '0'))
+MAX_PREMIUM_CLONES = int(os.getenv('MAX_PREMIUM_CLONES', '1'))
+MAX_BUSINESS_CLONES = int(os.getenv('MAX_BUSINESS_CLONES', '5'))
+CLONE_WEBHOOK_BASE_URL = os.getenv('CLONE_WEBHOOK_BASE_URL', '')
+CLONE_ENCRYPTION_KEY = os.getenv('CLONE_ENCRYPTION_KEY', '')
 
-# Feature Toggles
+# Rate limiting
+RATE_LIMIT_PER_USER = int(os.getenv('RATE_LIMIT_PER_USER', '2'))  # per second
+
+# Feature flags
 ENABLE_CROSS_PROMO = os.getenv('ENABLE_CROSS_PROMO', 'true').lower() == 'true'
 ENABLE_CLONING = os.getenv('ENABLE_CLONING', 'true').lower() == 'true'
 ENABLE_PREMIUM = os.getenv('ENABLE_PREMIUM', 'true').lower() == 'true'
 
-# Health Server
-PORT = int(os.getenv('PORT', '8443'))
+# UPI Payment
+UPI_ID = os.getenv('UPI_ID', 'payment@upi')
 
-# Welcome DM
-DEFAULT_WELCOME_MESSAGE = os.getenv(
-    'DEFAULT_WELCOME_MESSAGE',
-    'Welcome {name} to {channel_name}! We are glad to have you.'
-)
-
-# Drip DM
-DRIPDM_MAX_STEPS_FREE = int(os.getenv('DRIPDM_MAX_STEPS_FREE', '3'))
-DRIPDM_MAX_STEPS_PREMIUM = int(os.getenv('DRIPDM_MAX_STEPS_PREMIUM', '10'))
-DRIPDM_MIN_DELAY = int(os.getenv('DRIPDM_MIN_DELAY', '60'))  # minutes
+# Telethon (MTProto) - for fetching old pending join requests
+TELETHON_API_ID = os.getenv('TELETHON_API_ID', '')
+TELETHON_API_HASH = os.getenv('TELETHON_API_HASH', '')
+TELETHON_SESSION_STRING = os.getenv('TELETHON_SESSION_STRING', '')
