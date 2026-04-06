@@ -38,6 +38,18 @@ class Bot:
         try:
             logger.info('Starting Telegram Growth Engine...')
 
+            # Start health server FIRST so Render detects the port quickly
+            health_app = web.Application()
+            health_app.router.add_get('/', self._health_check)
+            health_app.router.add_get('/health', self._health_check)
+            runner = web.AppRunner(health_app)
+            await runner.setup()
+            port = config.PORT
+            site = web.TCPSite(runner, '0.0.0.0', port)
+            await site.start()
+            self.health_runner = runner
+            logger.info(f'Health server on port {port}')
+
             self.db_pool = DatabasePool()
             await self.db_pool.connect()
             self.db = DatabaseModels(self.db_pool)
@@ -79,17 +91,6 @@ class Bot:
             logger.info('Scheduler started')
 
             asyncio.create_task(self._startup_pending_sync())
-
-            health_app = web.Application()
-            health_app.router.add_get('/', self._health_check)
-            health_app.router.add_get('/health', self._health_check)
-            runner = web.AppRunner(health_app)
-            await runner.setup()
-            port = config.PORT
-            site = web.TCPSite(runner, '0.0.0.0', port)
-            await site.start()
-            self.health_runner = runner
-            logger.info(f'Health server on port {port}')
 
             logger.info('Bot is running!')
             while True:
