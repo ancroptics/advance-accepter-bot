@@ -12,6 +12,25 @@ import config
 
 logger = logging.getLogger(__name__)
 
+
+async def cancel_command(update, context):
+    """Global /cancel handler - clears all user_data states and ends conversations."""
+    # Clear all conversation-related user data
+    context.user_data.pop('editing_welcome_for', None)
+    context.user_data.pop('awaiting_support_username', None)
+    context.user_data.pop('editing_watermark_for', None)
+    context.user_data.pop('awaiting_upi_input', None)
+    context.user_data.pop('broadcast_channel', None)
+    context.user_data.pop('clone_token', None)
+    context.user_data.pop('clone_bot_username', None)
+    context.user_data.pop('clone_bot_id', None)
+    await update.message.reply_text(
+        '\u274c Operation cancelled.',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='dashboard')]])
+    )
+    return ConversationHandler.END
+
+
 def register_handlers(application):
     """Register all bot handlers."""
     from handlers.admin_panel import dashboard_handler, channels_handler, superadmin_handler
@@ -27,6 +46,8 @@ def register_handlers(application):
     application.add_handler(CommandHandler('superadmin', superadmin_handler))
     application.add_handler(CommandHandler('activate_premium', activate_premium_handler))
     application.add_handler(CommandHandler('deactivate_premium', deactivate_premium_handler))
+    # Global /cancel command
+    application.add_handler(CommandHandler('cancel', cancel_command))
 
     # 2. Chat member handler (bot added/removed from channels)
     application.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -54,7 +75,7 @@ def register_handlers(application):
             FORCE_SUB_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_force_sub_channel_input)],
         },
         fallbacks=[
-            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+            CommandHandler('cancel', cancel_command),
         ],
         per_message=False,
     )
@@ -69,12 +90,12 @@ def register_handlers(application):
         return await start_add_default_fsub_channel(update, context)
 
     default_fsub_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(default_fsub_entry, pattern=r'^add_default_fsub_ch$')],
+        entry_points=[CallbackQueryHandler(default_fsub_entry, pattern=r' ^add_default_fsub_ch$')],
         states={
             DEFAULT_FSUB_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_default_fsub_channel_input)],
         },
         fallbacks=[
-            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+            CommandHandler('cancel', cancel_command),
         ],
         per_message=False,
     )
@@ -91,12 +112,12 @@ def register_handlers(application):
         return await start_add_welcome_channel(update, context, chat_id)
 
     welcome_ch_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(welcome_ch_entry, pattern=r'^add_welcome_ch:')],
+        entry_points=[CallbackQueryHandler(welcome_ch_entry, pattern=r''^add_welcome_ch:')],
         states={
             WELCOME_CH_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_welcome_channel_input)],
         },
         fallbacks=[
-            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+            CommandHandler('cancel', cancel_command),
         ],
         per_message=False,
     )
@@ -116,7 +137,7 @@ def register_handlers(application):
             DEFAULT_WELCOME_BTN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_default_welcome_btn_input)],
         },
         fallbacks=[
-            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+            CommandHandler('cancel', cancel_command),
         ],
         per_message=False,
     )
@@ -129,6 +150,7 @@ def register_handlers(application):
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
     logger.info('All handlers registered.')
+
 
 async def handle_text_input(update, context):
     """Handle text inputs for various conversation states."""
