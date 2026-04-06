@@ -5,7 +5,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
@@ -14,6 +13,19 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not db:
             await update.message.reply_text('Bot is initializing. Please try again in a moment.')
             return
+
+        # Maintenance mode check
+        if user_id not in config.SUPERADMIN_IDS:
+            try:
+                maint_raw = await db.get_platform_setting('MAINTENANCE_MODE', 'false')
+                if isinstance(maint_raw, str) and maint_raw.lower() == 'true':
+                    await update.message.reply_text(
+                        '\U0001f6a7 Bot is currently under maintenance.\n\n'
+                        'Please try again later. We apologize for the inconvenience.'
+                    )
+                    return
+            except Exception:
+                pass
 
         # Process deep link parameters
         args = context.args
@@ -45,7 +57,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if existing and not existing.get('referrer_id'):
                     await db.set_referrer(user_id, referrer_id)
                     await db.award_referral_coins(referrer_id, config.DEFAULT_REFERRAL_COINS)
-                    # Check if referrer unlocked a new channel slot
                     referrer_data = await db.get_end_user(referrer_id)
                     ref_count = referrer_data.get('referral_count', 0) if referrer_data else 0
                     refs_per_slot = getattr(config, 'REFERRALS_PER_SLOT', 3)
