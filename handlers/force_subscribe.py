@@ -198,3 +198,123 @@ async def start_add_force_sub_channel(update, context, chat_id):
         'Send /cancel to abort.'
     )
     return FORCE_SUB_INPUT
+
+
+DEFAULT_FSUB_INPUT = 101
+
+async def start_add_default_fsub_channel(update, context):
+    """Start the conversation to add a default force sub channel for all channels."""
+    query = update.callback_query
+    context.user_data['adding_default_fsub'] = True
+    await query.edit_message_text(
+        '\U0001f512 ADD DEFAULT FORCE SUB CHANNEL\n\n'
+        'This channel will be added to ALL your channels that have force sub enabled.\n\n'
+        'Send the channel username or ID:\n\n'
+        'Examples:\n'
+        '\u2022 @mychannel\n'
+        '\u2022 -1001234567890\n\n'
+        'Send /cancel to abort.'
+    )
+    return DEFAULT_FSUB_INPUT
+
+async def handle_default_fsub_channel_input(update, context):
+    """Handle channel username/ID input for default force subscribe setup."""
+    import json as _json
+    text = update.message.text.strip()
+    db = context.application.bot_data.get('db')
+    user_id = update.effective_user.id
+
+    try:
+        if text.startswith('@'):
+            channel_username = text
+        elif text.startswith('-100'):
+            channel_username = int(text)
+        elif text.isdigit():
+            channel_username = int('-100' + text)
+        else:
+            channel_username = '@' + text
+
+        try:
+            chat_info = await context.bot.get_chat(channel_username)
+        except Exception:
+            await update.message.reply_text(
+                '\u274c Could not find that channel. Make sure:\n'
+                '1. The channel/group exists\n'
+                '2. The bot is a member of that channel\n'
+                '3. You entered the correct username or ID\n\n'
+                'Send the channel username (e.g. @mychannel) or /cancel'
+            )
+            return DEFAULT_FSUB_INPUT
+
+        # Verify bot is admin in the force sub channel
+        try:
+            bot_member = await context.bot.get_chat_member(chat_info.id, context.bot.id)
+            if bot_member.status not in ('administrator', 'creator'):
+                await update.message.reply_text(
+                    f'\u26a0\ufe0f I need to be an admin in {chat_info.title} '
+                    f'to verify if users have joined it.\n\n'
+                    f'Please add me as admin to {chat_info.title} first, then try again.\n\n'
+                    f'Send the channel username again after adding me, or /cancel'
+                )
+                return DEFAULT_FSUB_INPUT
+        except Exception:
+            await update.message.reply_text(
+                f'\u26a0\ufe0f I am not a member of {chat_info.title}.\n\n'
+                f'Please add me as admin to that channel first.\n\n'
+                f'Send the channel username again after adding me, or /cancel'
+            )
+            return DEFAULT_FSUB_INPUT
+
+        # Get current default list
+        default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+        try:
+            default_fsub = _json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+        except Exception:
+            default_fsub = []
+
+        # Check for duplicates
+        for ch in default_fsub:
+            if isinstance(ch, dict) and ch.get('chat_id') == chat_info.id:
+                await update.message.reply_text(f'\u26a0\ufe0f {chat_info.title} is already in the default force subscribe list!')
+                return ConversationHandler.END
+
+        new_entry = {
+            'chat_id': chat_info.id,
+            'title': chat_info.title,
+            'username': chat_info.username or '',
+            'url': f'https://t.me/{chat_info.username}' if chat_info.username else '',
+        }
+        default_fsub.append(new_entry)
+        await db.set_platform_setting(f'owner_{user_id}_default_fsub_channels', _json.dumps(default_fsub))
+
+        # Sync to all channels that have force sub enabled
+        channels = await db.get_owner_channels(user_id)
+        synced = 0
+        for ch in (channels or []):
+            full_ch = await db.get_channel(ch['chat_id'])
+            if full_ch and full_ch.get('force_subscribe_enabled'):
+                existing_raw = full_ch.get('force_subscribe_channels') or []
+                if isinstance(existing_raw, str):
+                    try:
+                        existing = _json.loads(existing_raw)
+                    except Exception:
+                        existing = []
+                else:
+                    existing = existing_raw if isinstance(existing_raw, list) else []
+                existing_ids = {c.get('chat_id') for c in existing if isinstance(c, dict)}
+                if chat_info.id not in existing_ids:
+                    existing.append(new_entry)
+                    await db.update_channel_setting(ch['chat_id'], 'force_subscribe_channels', _json.dumps(existing))
+                    synced += 1
+
+        await update.message.reply_text(
+            f'\u2705 Added {chat_info.title} as default force sub channel!\n\n'
+            f'Synced to {synced} channel(s) with force sub enabled.\n\n'
+            'Use /dashboard to manage settings.'
+        )
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f'Error in default force sub channel input: {e}')
+        await update.message.reply_text(f'\u274c Error: {e}\nPlease try again or /cancel')
+        return DEFAULT_FSUB_INPUT
