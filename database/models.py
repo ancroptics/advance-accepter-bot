@@ -92,7 +92,7 @@ class DatabaseModels:
 
     async def get_owner_channels(self, owner_id):
         return await self.db.fetch(
-            'SELECT * FROM managed_channels WHERE owner_id = $1 ORDER BY added_at', owner_id)
+            'SELECT * FROM managed_channels WHERE owner_id = $1 AND is_active = TRUE ORDER BY added_at', owner_id)
 
     async def add_channel(self, chat_id, owner_id, chat_title=None, chat_type='channel', username=None):
         return await self.db.execute("""
