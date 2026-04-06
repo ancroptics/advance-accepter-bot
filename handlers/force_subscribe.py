@@ -93,36 +93,82 @@ force_subscribe_conv_handler = None
 
 FORCE_SUB_INPUT = 100
 
+async def _resolve_channel_input(update, context):
+    """Resolve channel from text (username/ID/invite link) or forwarded message. Returns chat_info or None."""
+    import re as _re
+    msg = update.message
+
+    # Handle forwarded messages
+    if msg.forward_from_chat:
+        try:
+            return await context.bot.get_chat(msg.forward_from_chat.id)
+        except Exception:
+            await msg.reply_text(
+                '\u274c Could not access the forwarded channel. Make sure the bot is a member.\n'
+                'Try sending the channel username or ID instead, or /cancel'
+            )
+            return None
+
+    text = (msg.text or '').strip()
+    if not text:
+        await msg.reply_text('Please send a channel username, ID, or forward a message from the channel.')
+        return None
+
+    # Handle invite links (t.me/+xxx or t.me/joinchat/xxx)
+    invite_match = _re.match(r'https?://t\.me/(\+[\w-]+|joinchat/[\w-]+)', text)
+    if invite_match:
+        await msg.reply_text(
+            '\u26a0\ufe0f Invite links cannot be used to look up channels.\n\n'
+            'Please send one of these instead:\n'
+            '\u2022 Channel username (e.g. @mychannel)\n'
+            '\u2022 Channel ID (e.g. -1001234567890)\n'
+            '\u2022 Forward a message from the channel\n\n'
+            'Or /cancel to abort.'
+        )
+        return None
+
+    # Handle t.me/username links
+    username_match = _re.match(r'https?://t\.me/([\w]+)', text)
+    if username_match:
+        text = '@' + username_match.group(1)
+
+    # Parse username or ID
+    if text.startswith('@'):
+        channel_ref = text
+    elif text.startswith('-100'):
+        channel_ref = int(text)
+    elif text.isdigit():
+        channel_ref = int('-100' + text)
+    else:
+        channel_ref = '@' + text
+
+    try:
+        return await context.bot.get_chat(channel_ref)
+    except Exception:
+        await msg.reply_text(
+            '\u274c Could not find that channel. Make sure:\n'
+            '1. The channel/group exists\n'
+            '2. The bot is a member of that channel\n'
+            '3. You entered the correct username or ID\n\n'
+            'You can also forward a message from the channel.\n\n'
+            'Send the channel username (e.g. @mychannel) or /cancel'
+        )
+        return None
+
+
 async def handle_force_sub_channel_input(update, context):
     """Handle channel username/ID input for force subscribe setup."""
-    text = update.message.text.strip()
     db = context.application.bot_data.get('db')
     chat_id = context.user_data.get('force_sub_target_channel')
-    
+
     if not chat_id:
         await update.message.reply_text('\u274c Session expired. Please try again from channel settings.')
         return ConversationHandler.END
-    
+
     try:
-        if text.startswith('@'):
-            channel_username = text
-        elif text.startswith('-100'):
-            channel_username = int(text)
-        elif text.isdigit():
-            channel_username = int('-100' + text)
-        else:
-            channel_username = '@' + text
-        
-        try:
-            chat_info = await context.bot.get_chat(channel_username)
-        except Exception:
-            await update.message.reply_text(
-                '\u274c Could not find that channel. Make sure:\n'
-                '1. The channel/group exists\n'
-                '2. The bot is a member of that channel\n'
-                '3. You entered the correct username or ID\n\n'
-                'Send the channel username (e.g. @mychannel) or /cancel'
-            )
+        chat_info = await _resolve_channel_input(update, context)
+        if not chat_info:
+            return FORCE_SUB_INPUT
             return FORCE_SUB_INPUT
 
         # Verify bot is admin in the force sub channel (needed to check member status)
@@ -222,10 +268,12 @@ async def start_add_force_sub_channel(update, context, chat_id):
     context.user_data['force_sub_target_channel'] = chat_id
     await query.edit_message_text(
         '\U0001f512 ADD FORCE SUBSCRIBE CHANNEL\n\n'
-        'Send the channel username or ID that users must join:\n\n'
+        'Send the channel username, ID, or forward a message from the channel:\n\n'
         'Examples:\n'
         '\u2022 @mychannel\n'
-        '\u2022 -1001234567890\n\n'
+        '\u2022 -1001234567890\n'
+        '\u2022 https://t.me/mychannel\n'
+        '\u2022 Forward a message from the channel\n\n'
         'Send /cancel to abort.'
     )
     return FORCE_SUB_INPUT
@@ -243,7 +291,9 @@ async def start_add_default_fsub_channel(update, context):
         'Send the channel username or ID:\n\n'
         'Examples:\n'
         '\u2022 @mychannel\n'
-        '\u2022 -1001234567890\n\n'
+        '\u2022 -1001234567890\n'
+        '\u2022 https://t.me/mychannel\n'
+        '\u2022 Forward a message from the channel\n\n'
         'Send /cancel to abort.'
     )
     return DEFAULT_FSUB_INPUT
