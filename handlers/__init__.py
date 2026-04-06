@@ -154,6 +154,37 @@ async def handle_text_input(update, context):
         )
         return
 
+    # Handle default welcome message editing
+    if context.user_data.get('editing_default_welcome'):
+        del context.user_data['editing_default_welcome']
+        new_msg = update.message.text
+        try:
+            await db.pool.execute(
+                "INSERT INTO platform_settings (key, value, updated_at) VALUES ($1, $2, NOW()) "
+                "ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()",
+                f'owner_{user_id}_default_welcome', new_msg
+            )
+        except Exception as e:
+            logger.error(f'Failed to save default welcome: {e}')
+        channels = await db.get_owner_channels(user_id)
+        updated = 0
+        for ch in (channels or []):
+            full_ch = await db.get_channel(ch['chat_id'])
+            if full_ch and full_ch.get('welcome_dm_enabled'):
+                try:
+                    await db.update_channel_setting(ch['chat_id'], 'welcome_message', new_msg)
+                    updated += 1
+                except Exception:
+                    pass
+        await update.message.reply_text(
+            f'\u2705 Welcome message updated and applied to {updated} enabled channel(s)!\n\nPreview:\n{new_msg}',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('\U0001f4e9 Welcome Settings', callback_data='default_welcome_msg')],
+                [InlineKeyboardButton('\U0001f519 Back to Dashboard', callback_data='dashboard')]
+            ])
+        )
+        return
+
     # Handle support username editing
     if context.user_data.get('awaiting_support_username'):
         context.user_data.pop('awaiting_support_username')
