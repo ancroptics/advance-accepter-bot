@@ -372,9 +372,193 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_dashboard(update, context, edit=True)
 
         elif data == 'default_welcome_msg':
-            # Show default welcome message settings for all channels
+            # Advanced welcome message settings - one message, choose channels
             channels = await db.get_owner_channels(user_id)
-            # Get current default from first channel or platform_settings
+            ch_count = len(channels) if channels else 0
+
+            # Get current default welcome message
+            default_msg = None
+            default_media_type = None
+            default_buttons_json = '[]'
+            default_parse_mode = 'HTML'
+            try:
+                row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_default_welcome'
+                )
+                if row:
+                    default_msg = row['value']
+                media_row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_media_type'
+                )
+                if media_row:
+                    default_media_type = media_row['value']
+                btns_row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_buttons'
+                )
+                if btns_row:
+                    default_buttons_json = btns_row['value']
+                pm_row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_parse_mode'
+                )
+                if pm_row:
+                    default_parse_mode = pm_row['value']
+            except Exception:
+                pass
+
+            if not default_msg:
+                if channels:
+                    ch = await db.get_channel(channels[0]['chat_id'])
+                    default_msg = ch.get('welcome_message', '') if ch else ''
+
+            current = default_msg or 'Welcome to {channel_name}! \U0001f389'
+
+            enabled_count = 0
+            for ch in (channels or []):
+                full_ch = await db.get_channel(ch['chat_id'])
+                if full_ch and full_ch.get('welcome_dm_enabled'):
+                    enabled_count += 1
+
+            all_enabled = enabled_count == ch_count and ch_count > 0
+            status = '\U0001f7e2 Enabled' if all_enabled else ('\U0001f7e1 Partial' if enabled_count > 0 else '\U0001f534 Disabled')
+
+            try:
+                welcome_btns = json.loads(default_buttons_json) if isinstance(default_buttons_json, str) else default_buttons_json
+            except (ValueError, TypeError):
+                welcome_btns = []
+            if not isinstance(welcome_btns, list):
+                welcome_btns = []
+
+            text = (
+                f'\U0001f4e9 WELCOME MESSAGE SETTINGS\n\n'
+                f'Status: {status} ({enabled_count}/{ch_count} channels)\n'
+                f'Parse Mode: {default_parse_mode}\n'
+            )
+            if default_media_type:
+                text += f'Media: {default_media_type} \u2705\n'
+
+            text += f'\n\u2501\u2501\u2501 Message Preview \u2501\u2501\u2501\n\n'
+            preview = current[:300]
+            if len(current) > 300:
+                preview += '...'
+            text += f'{preview}\n\n'
+
+            if welcome_btns:
+                text += f'\u2501\u2501\u2501 Channel Buttons ({len(welcome_btns)}) \u2501\u2501\u2501\n\n'
+                for i, btn in enumerate(welcome_btns, 1):
+                    title = btn.get('text', btn.get('title', 'Unknown'))
+                    text += f'{i}. {title} \u2705\n'
+                text += '\n'
+
+            text += (
+                '\u2501\u2501\u2501 Your Channels \u2501\u2501\u2501\n\n'
+                'Toggle which channels display this welcome message:\n'
+            )
+
+            buttons = []
+            toggle_all_text = '\U0001f534 Disable All' if all_enabled else '\U0001f7e2 Enable All'
+            buttons.append([InlineKeyboardButton(toggle_all_text, callback_data='toggle_all_welcome')])
+
+            for ch in (channels or []):
+                full_ch = await db.get_channel(ch['chat_id'])
+                dm_on = full_ch.get('welcome_dm_enabled', False) if full_ch else False
+                icon = '\u2705' if dm_on else '\u274c'
+                title = ch.get('chat_title', 'Unknown')[:25]
+                buttons.append([
+                    InlineKeyboardButton(f'{icon} {title}', callback_data=f'toggle_welcome_channel:{ch["chat_id"]}'),
+                ])
+
+            if not channels:
+                text += '\nNo channels connected yet!\n'
+
+            text += (
+                '\n\u2501\u2501\u2501 Variables \u2501\u2501\u2501\n'
+                '{first_name}, {username}, {channel_name},\n'
+                '{member_count}, {referral_link}, {coins}, {date}\n'
+            )
+
+            buttons.append([
+                InlineKeyboardButton('\u270f\ufe0f Edit Message', callback_data='edit_default_welcome'),
+                InlineKeyboardButton('\U0001f440 Preview', callback_data='preview_default_welcome'),
+            ])
+            buttons.append([
+                InlineKeyboardButton('\u2795 Add Channel Button', callback_data='add_default_welcome_btn'),
+            ])
+            for i, btn in enumerate(welcome_btns):
+                title = btn.get('text', btn.get('title', 'Unknown'))[:20]
+                buttons.append([InlineKeyboardButton(f'\u274c Remove {title}', callback_data=f'remove_default_welcome_btn:{i}')])
+            buttons.append([
+                InlineKeyboardButton('\U0001f4f7 Set Media', callback_data='set_default_welcome_media'),
+            ])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
+
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+
+
+        elif data == 'toggle_all_welcome':
+            channels = await db.get_owner_channels(user_id)
+            enabled_count = 0
+            for ch in (channels or []):
+                full_ch = await db.get_channel(ch['chat_id'])
+                if full_ch and full_ch.get('welcome_dm_enabled'):
+                    enabled_count += 1
+            all_enabled = enabled_count == len(channels) and len(channels) > 0
+            new_state = not all_enabled
+            for ch in (channels or []):
+                await db.update_channel_setting(ch['chat_id'], 'welcome_dm_enabled', new_state)
+                if new_state:
+                    try:
+                        row = await db.pool.fetchrow(
+                            "SELECT value FROM platform_settings WHERE key = $1",
+                            f'owner_{user_id}_default_welcome'
+                        )
+                        if row and row['value']:
+                            await db.update_channel_setting(ch['chat_id'], 'welcome_message', row['value'])
+                        btns_row = await db.pool.fetchrow(
+                            "SELECT value FROM platform_settings WHERE key = $1",
+                            f'owner_{user_id}_welcome_buttons'
+                        )
+                        if btns_row:
+                            await db.update_channel_setting(ch['chat_id'], 'welcome_buttons_json', btns_row['value'])
+                    except Exception:
+                        pass
+            await query.answer(f'Welcome DM {"enabled" if new_state else "disabled"} for all channels!')
+            query.data = 'default_welcome_msg'
+            await callback_router(update, context)
+
+        elif data.startswith('toggle_welcome_channel:'):
+            chat_id = int(data.split(':')[1])
+            channel = await db.get_channel(chat_id)
+            current = channel.get('welcome_dm_enabled', False) if channel else False
+            new_state = not current
+            await db.update_channel_setting(chat_id, 'welcome_dm_enabled', new_state)
+            if new_state:
+                try:
+                    row = await db.pool.fetchrow(
+                        "SELECT value FROM platform_settings WHERE key = $1",
+                        f'owner_{user_id}_default_welcome'
+                    )
+                    if row and row['value']:
+                        await db.update_channel_setting(chat_id, 'welcome_message', row['value'])
+                    btns_row = await db.pool.fetchrow(
+                        "SELECT value FROM platform_settings WHERE key = $1",
+                        f'owner_{user_id}_welcome_buttons'
+                    )
+                    if btns_row:
+                        await db.update_channel_setting(chat_id, 'welcome_buttons_json', btns_row['value'])
+                except Exception:
+                    pass
+            await query.answer(f'Welcome DM {"enabled" if new_state else "disabled"}!')
+            query.data = 'default_welcome_msg'
+            await callback_router(update, context)
+
+        elif data == 'edit_default_welcome':
             default_msg = None
             try:
                 row = await db.pool.fetchrow(
@@ -385,35 +569,127 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     default_msg = row['value']
             except Exception:
                 pass
-            if not default_msg:
-                # Fallback: use first channel's welcome message
-                if channels:
-                    ch = await db.get_channel(channels[0]['chat_id'])
-                    default_msg = ch.get('welcome_message', '') if ch else ''
             current = default_msg or 'Not set'
-            ch_count = len(channels) if channels else 0
-            text = (
-                '\U0001f4e9 DEFAULT WELCOME MESSAGE\n\n'
-                '\u2501\u2501\u2501 Current Message \u2501\u2501\u2501\n\n'
-                f'{current}\n\n'
-                '\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n'
-                f'This message will be applied to ALL your channels ({ch_count} channels).\n\n'
-                'Send me the new welcome message.\n\n'
-                'Available variables:\n'
-                '{first_name} - User first name\n'
-                '{username} - Username\n'
-                '{channel_name} - Channel name\n'
-                '{member_count} - Member count\n'
-                '{referral_link} - Referral link\n\n'
-                'Send /cancel to cancel.'
-            )
             context.user_data['editing_default_welcome'] = True
             await query.edit_message_text(
-                text,
+                f'\U0001f4e9 EDIT WELCOME MESSAGE\n\n'
+                f'\u2501\u2501\u2501 Current Message \u2501\u2501\u2501\n\n'
+                f'{current}\n\n'
+                f'\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n'
+                f'Send me the new welcome message.\n\n'
+                f'Available variables:\n'
+                f'{{first_name}} - User first name\n'
+                f'{{username}} - Username\n'
+                f'{{channel_name}} - Channel name\n'
+                f'{{member_count}} - Member count\n'
+                f'{{referral_link}} - Referral link\n'
+                f'{{coins}} - User coins\n'
+                f'{{date}} - Current date\n\n'
+                f'Send /cancel to cancel.',
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('Cancel', callback_data='dashboard')]
+                    [InlineKeyboardButton('Cancel', callback_data='default_welcome_msg')]
                 ])
             )
+
+        elif data == 'preview_default_welcome':
+            default_msg = None
+            try:
+                row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_default_welcome'
+                )
+                if row:
+                    default_msg = row['value']
+            except Exception:
+                pass
+            msg = default_msg or 'Welcome to {channel_name}! \U0001f389'
+            preview = msg.replace('{first_name}', query.from_user.first_name or 'there')
+            preview = preview.replace('{last_name}', query.from_user.last_name or '')
+            preview = preview.replace('{username}', f'@{query.from_user.username}' if query.from_user.username else 'there')
+            preview = preview.replace('{user_id}', str(query.from_user.id))
+            preview = preview.replace('{channel_name}', 'My Channel')
+            preview = preview.replace('{channel_username}', '@mychannel')
+            preview = preview.replace('{member_count}', '1000')
+            preview = preview.replace('{coins}', '0')
+            from datetime import datetime
+            preview = preview.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
+            preview = preview.replace('{referral_link}', f'https://t.me/bot?start=ref_{query.from_user.id}')
+            try:
+                btns_row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_buttons'
+                )
+                welcome_btns = json.loads(btns_row['value']) if btns_row else []
+            except Exception:
+                welcome_btns = []
+            btn_rows = []
+            for btn in welcome_btns:
+                btn_rows.append([InlineKeyboardButton(btn.get('text', 'Link'), url=btn.get('url', 'https://t.me'))])
+            btn_rows.append([InlineKeyboardButton('\U0001f519 Back', callback_data='default_welcome_msg')])
+            text = f"\U0001f440 WELCOME MESSAGE PREVIEW\n\n{preview}\n\n(This is how the welcome DM will look)"
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(btn_rows))
+
+        elif data.startswith('remove_default_welcome_btn:'):
+            remove_idx = int(data.split(':')[1])
+            try:
+                btns_row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_buttons'
+                )
+                welcome_btns = json.loads(btns_row['value']) if btns_row else []
+            except Exception:
+                welcome_btns = []
+            if 0 <= remove_idx < len(welcome_btns):
+                removed = welcome_btns.pop(remove_idx)
+                await db.pool.execute(
+                    "INSERT INTO platform_settings (key, value) VALUES ($1, $2) "
+                    "ON CONFLICT (key) DO UPDATE SET value = $2",
+                    f'owner_{user_id}_welcome_buttons', json.dumps(welcome_btns)
+                )
+                channels = await db.get_owner_channels(user_id)
+                for ch in (channels or []):
+                    full_ch = await db.get_channel(ch['chat_id'])
+                    if full_ch and full_ch.get('welcome_dm_enabled'):
+                        await db.update_channel_setting(ch['chat_id'], 'welcome_buttons_json', json.dumps(welcome_btns))
+                await query.answer(f"Removed {removed.get('text', 'channel')}", show_alert=True)
+            query.data = 'default_welcome_msg'
+            await callback_router(update, context)
+
+        elif data == 'set_default_welcome_media':
+            context.user_data['awaiting_default_welcome_media'] = True
+            await query.edit_message_text(
+                '\U0001f4f7 SET WELCOME MEDIA\n\n'
+                'Send me a photo, video, GIF, or document to attach to your welcome message.\n\n'
+                'Or send "none" to remove current media.\n\n'
+                'Send /cancel to cancel.',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('\u274c Remove Media', callback_data='remove_default_welcome_media')],
+                    [InlineKeyboardButton('Cancel', callback_data='default_welcome_msg')]
+                ])
+            )
+
+        elif data == 'remove_default_welcome_media':
+            try:
+                await db.pool.execute(
+                    "DELETE FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_media_type'
+                )
+                await db.pool.execute(
+                    "DELETE FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_welcome_media_file_id'
+                )
+                channels = await db.get_owner_channels(user_id)
+                for ch in (channels or []):
+                    full_ch = await db.get_channel(ch['chat_id'])
+                    if full_ch and full_ch.get('welcome_dm_enabled'):
+                        await db.update_channel_setting(ch['chat_id'], 'welcome_media_type', '')
+                        await db.update_channel_setting(ch['chat_id'], 'welcome_media_file_id', '')
+            except Exception:
+                pass
+            await query.answer('Media removed!', show_alert=True)
+            query.data = 'default_welcome_msg'
+            await callback_router(update, context)
+
 
         elif data == 'default_force_sub':
             # Show force sub settings that apply to all channels
@@ -1601,19 +1877,22 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         except Exception as e:
             logger.error(f'Failed to save default welcome: {e}')
-        # Apply to ALL owner's channels
+        # Apply to channels that have welcome DM enabled
         channels = await db.get_owner_channels(user_id)
         updated = 0
         for ch in (channels or []):
-            try:
-                await db.update_channel_setting(ch['chat_id'], 'welcome_message', new_message)
-                updated += 1
-            except Exception:
-                pass
+            full_ch = await db.get_channel(ch['chat_id'])
+            if full_ch and full_ch.get('welcome_dm_enabled'):
+                try:
+                    await db.update_channel_setting(ch['chat_id'], 'welcome_message', new_message)
+                    updated += 1
+                except Exception:
+                    pass
         await update.message.reply_text(
-            f'\u2705 Default welcome message updated and applied to {updated} channel(s)!\n\n'
+            f'\u2705 Welcome message updated and applied to {updated} enabled channel(s)!\n\n'
             f'Preview:\n{new_message}',
             reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('\U0001f4e9 Welcome Settings', callback_data='default_welcome_msg')],
                 [InlineKeyboardButton('\U0001f519 Back to Dashboard', callback_data='dashboard')]
             ])
         )
