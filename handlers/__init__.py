@@ -60,6 +60,26 @@ def register_handlers(application):
     )
     application.add_handler(force_sub_conv)
 
+    # 5a2. Default force sub channel input conversation handler (dashboard-level)
+    from handlers.force_subscribe import handle_default_fsub_channel_input, start_add_default_fsub_channel, DEFAULT_FSUB_INPUT
+
+    async def default_fsub_entry(update, context):
+        query = update.callback_query
+        await query.answer()
+        return await start_add_default_fsub_channel(update, context)
+
+    default_fsub_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(default_fsub_entry, pattern=r'^add_default_fsub_ch$')],
+        states={
+            DEFAULT_FSUB_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_default_fsub_channel_input)],
+        },
+        fallbacks=[
+            CommandHandler('cancel', lambda u, c: ConversationHandler.END),
+        ],
+        per_message=False,
+    )
+    application.add_handler(default_fsub_conv)
+
     # 5b. Welcome channel button input conversation handler
     from handlers.welcome_dm import handle_welcome_channel_input, start_add_welcome_channel, WELCOME_CH_INPUT
 
