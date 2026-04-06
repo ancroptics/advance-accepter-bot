@@ -15,7 +15,13 @@ logger = logging.getLogger(__name__)
 async def _cancel_handler(update, context):
     """Universal cancel handler for all conversations."""
     context.user_data.clear()
-    await update.message.reply_text('\u274c Operation cancelled.')
+    await update.message.reply_text(
+        '\u274c Operation cancelled.',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='dashboard')],
+            [InlineKeyboardButton('\U0001f3e0 Main Menu', callback_data='start')]
+        ])
+    )
     return ConversationHandler.END
 
 def register_handlers(application):
@@ -127,6 +133,30 @@ def register_handlers(application):
         per_message=False,
     )
     application.add_handler(default_welcome_btn_conv)
+
+    # 5d. Template creation conversation handler
+    from handlers.template_mgmt import (
+        start_create_template, handle_template_name, handle_template_content,
+        TEMPLATE_NAME, TEMPLATE_CONTENT
+    )
+
+    template_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_create_template, pattern=r'^create_template$')],
+        states={
+            TEMPLATE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_template_name)],
+            TEMPLATE_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_template_content)],
+        },
+        fallbacks=[
+            CommandHandler('cancel', _cancel_handler),
+        ],
+        per_message=False,
+    )
+    application.add_handler(template_conv)
+
+    # 5e. Template view/delete callback handlers
+    from handlers.template_mgmt import view_template_handler, delete_template_handler
+    application.add_handler(CallbackQueryHandler(view_template_handler, pattern=r'^jiew_template:'))
+    application.add_handler(CallbackQueryHandler(delete_template_handler, pattern=r'^delete_template:'))
 
     # 6. Callback query handler (catch-all for buttons)
     application.add_handler(CallbackQueryHandler(callback_router))
