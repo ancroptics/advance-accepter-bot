@@ -272,7 +272,7 @@ async def handle_force_sub_channel_input(update, context):
             features = get_tier_features(tier)
             base_slots = features.get('max_channels', 1)
         else:
-            base_slots = 999  # No limit when premium is off
+            base_slots = 1  # Default 1 slot; users earn more via referrals (3 referrals = 1 extra slot)
         bonus_slots = await db.get_referral_bonus_slots(user_id)
         max_slots = base_slots + bonus_slots
         if len(current_channels) >= max_slots:
@@ -406,7 +406,7 @@ async def handle_default_fsub_channel_input(update, context):
             features = get_tier_features(tier)
             base_slots = features.get('max_channels', 1)
         else:
-            base_slots = 999  # No limit when premium is off
+            base_slots = 1  # Default 1 slot; users earn more via referrals (3 referrals = 1 extra slot)
         bonus_slots = await db.get_referral_bonus_slots(user_id)
         max_slots = base_slots + bonus_slots
         if len(default_fsub) >= max_slots:
