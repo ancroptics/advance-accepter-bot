@@ -56,7 +56,7 @@ async def view_template_handler(update, context):
         await query.answer('Template not found', show_alert=True)
         return
 
-    text = f'📄 TEMPLATE8�{template["name"]}\n\n'
+    text = f'📄 TEMPLATE: {template["name"]}\n\n'
     text += f'{template.get("content", "(empty)")}\n\n'
     text += f'Type: {template.get("content_type", "text").title()}'
 
