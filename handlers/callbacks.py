@@ -695,25 +695,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Show force sub settings that apply to all channels
             channels = await db.get_owner_channels(user_id)
             ch_count = len(channels) if channels else 0
-            # Check how many have force sub enabled
             enabled_count = 0
-            force_sub_channels = []
             for ch in (channels or []):
                 full_ch = await db.get_channel(ch['chat_id'])
                 if full_ch and full_ch.get('force_subscribe_enabled'):
                     enabled_count += 1
-                fsub_raw = full_ch.get('force_subscribe_channels') or [] if full_ch else []
-                if isinstance(fsub_raw, str):
-                    try:
-                        import json as _json
-                        fsub_raw = _json.loads(fsub_raw)
-                    except Exception:
-                        fsub_raw = []
-                if fsub_raw and isinstance(fsub_raw, list):
-                    for fc in fsub_raw:
-                        title = fc.get('title', 'Unknown') if isinstance(fc, dict) else str(fc)
-                        if title not in [x for x in force_sub_channels]:
-                            force_sub_channels.append(title)
+
+            # Get dashboard-level default force sub channels
+            default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+            try:
+                default_fsub = json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+            except Exception:
+                default_fsub = []
 
             all_enabled = enabled_count == ch_count and ch_count > 0
             status = '\U0001f7e2 Enabled' if all_enabled else ('\U0001f7e1 Partial' if enabled_count > 0 else '\U0001f534 Disabled')
@@ -721,20 +714,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f'\U0001f512 FORCE SUBSCRIBE (All Channels)\n\n'
                 f'Status: {status} ({enabled_count}/{ch_count} channels)\n\n'
             )
-            if force_sub_channels:
-                text += 'Required channels:\n'
-                for i, title in enumerate(force_sub_channels[:10], 1):
+            if default_fsub:
+                text += '\U0001f4cb Default Required Channels (applied to all toggled-on):\n'
+                for i, fc in enumerate(default_fsub[:10], 1):
+                    title = fc.get('title', 'Unknown') if isinstance(fc, dict) else str(fc)
                     text += f'{i}. {title} \u2705\n'
                 text += '\n'
+            else:
+                text += '\U0001f4cb Default Required Channels: None\n\n'
             text += (
-                'Use the buttons below to enable or disable\n'
-                'force subscribe for ALL your channels at once.'
+                'Add channels here to apply them to ALL toggled-on channels.\n'
+                'Use per-channel \u2699\ufe0f Settings to add channel-specific ones.'
             )
             toggle_text = '\U0001f534 Disable All' if all_enabled else '\U0001f7e2 Enable All'
             buttons = [
                 [InlineKeyboardButton(toggle_text, callback_data='toggle_default_force_sub')],
+                [InlineKeyboardButton('\u2795 Add Default Channel', callback_data='add_default_fsub_ch')],
             ]
-            # Per-channel force sub settings
+            if default_fsub:
+                buttons.append([InlineKeyboardButton('\U0001f5d1 Remove Default Channel', callback_data='remove_default_fsub_menu')])
             for ch in (channels or []):
                 full_ch = await db.get_channel(ch['chat_id'])
                 fs_on = full_ch.get('force_subscribe_enabled', False) if full_ch else False
@@ -756,7 +754,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not channels:
                 await query.answer('No channels found!', show_alert=True)
                 return
-            # Check current state - if all enabled, disable all; otherwise enable all
             all_enabled = True
             for ch in channels:
                 full_ch = await db.get_channel(ch['chat_id'])
@@ -764,16 +761,92 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     all_enabled = False
                     break
             new_state = not all_enabled
+            # Get default force sub channels
+            default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+            try:
+                default_fsub = json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+            except Exception:
+                default_fsub = []
             for ch in channels:
                 await db.update_channel_setting(ch['chat_id'], 'force_subscribe_enabled', new_state)
+                # When enabling, sync default channels into each channel
+                if new_state and default_fsub:
+                    full_ch = await db.get_channel(ch['chat_id'])
+                    existing_raw = full_ch.get('force_subscribe_channels') or [] if full_ch else []
+                    if isinstance(existing_raw, str):
+                        try:
+                            existing = json.loads(existing_raw)
+                        except Exception:
+                            existing = []
+                    else:
+                        existing = existing_raw if isinstance(existing_raw, list) else []
+                    existing_ids = {c.get('chat_id') for c in existing if isinstance(c, dict)}
+                    merged = list(existing)
+                    for dfc in default_fsub:
+                        if isinstance(dfc, dict) and dfc.get('chat_id') not in existing_ids:
+                            merged.append(dfc)
+                    await db.update_channel_setting(ch['chat_id'], 'force_subscribe_channels', json.dumps(merged))
             state_text = 'enabled' if new_state else 'disabled'
             await query.answer(f'Force subscribe {state_text} for all {len(channels)} channels!', show_alert=True)
-            # Re-show the menu by simulating the callback
-            # Rebuild the force sub view
             query.data = 'default_force_sub'
             await button_callback(update, context)
 
-        elif data == 'close':
+        elif data == 'remove_default_fsub_menu':
+            default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+            try:
+                default_fsub = json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+            except Exception:
+                default_fsub = []
+            if not default_fsub:
+                await query.answer('No default channels to remove!', show_alert=True)
+                return
+            buttons = []
+            for fc in default_fsub:
+                title = fc.get('title', 'Unknown') if isinstance(fc, dict) else str(fc)
+                fc_id = fc.get('chat_id', 0) if isinstance(fc, dict) else 0
+                buttons.append([InlineKeyboardButton(f'\u274c {title}', callback_data=f'remove_default_fsub:{fc_id}')])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='default_force_sub')])
+            await query.edit_message_text(
+                '\U0001f5d1 Remove Default Force Sub Channel\n\nSelect a channel to remove:',
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+
+        elif data.startswith('remove_default_fsub:'):
+            remove_id = int(data.split(':')[1])
+            default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+            try:
+                default_fsub = json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+            except Exception:
+                default_fsub = []
+            removed_title = None
+            new_list = []
+            for fc in default_fsub:
+                if isinstance(fc, dict) and fc.get('chat_id') == remove_id:
+                    removed_title = fc.get('title', 'Unknown')
+                else:
+                    new_list.append(fc)
+            await db.set_platform_setting(f'owner_{user_id}_default_fsub_channels', json.dumps(new_list))
+            # Also remove from all channels that have force sub enabled
+            channels = await db.get_owner_channels(user_id)
+            for ch in (channels or []):
+                full_ch = await db.get_channel(ch['chat_id'])
+                if full_ch and full_ch.get('force_subscribe_enabled'):
+                    ch_fsub_raw = full_ch.get('force_subscribe_channels') or []
+                    if isinstance(ch_fsub_raw, str):
+                        try:
+                            ch_fsub = json.loads(ch_fsub_raw)
+                        except Exception:
+                            ch_fsub = []
+                    else:
+                        ch_fsub = ch_fsub_raw if isinstance(ch_fsub_raw, list) else []
+                    filtered = [c for c in ch_fsub if not (isinstance(c, dict) and c.get('chat_id') == remove_id)]
+                    if len(filtered) != len(ch_fsub):
+                        await db.update_channel_setting(ch['chat_id'], 'force_subscribe_channels', json.dumps(filtered))
+            await query.answer(f'Removed {removed_title or "channel"} from all channels!', show_alert=True)
+            query.data = 'default_force_sub'
+            await button_callback(update, context)
+
+                elif data == 'close':
             await query.delete_message()
 
         elif data.startswith('channel:') or data.startswith('manage_channel:'):
@@ -814,7 +887,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = int(data.split(':')[1])
             channel = await db.get_channel(chat_id)
             current = channel.get('force_subscribe_enabled', False)
-            await db.update_channel_setting(chat_id, 'force_subscribe_enabled', not current)
+            new_state = not current
+            await db.update_channel_setting(chat_id, 'force_subscribe_enabled', new_state)
+            # When enabling, sync default force sub channels into this channel
+            if new_state:
+                default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+                try:
+                    default_fsub = json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+                except Exception:
+                    default_fsub = []
+                if default_fsub:
+                    existing_raw = channel.get('force_subscribe_channels') or []
+                    if isinstance(existing_raw, str):
+                        try:
+                            existing = json.loads(existing_raw)
+                        except Exception:
+                            existing = []
+                    else:
+                        existing = existing_raw if isinstance(existing_raw, list) else []
+                    existing_ids = {c.get('chat_id') for c in existing if isinstance(c, dict)}
+                    merged = list(existing)
+                    for dfc in default_fsub:
+                        if isinstance(dfc, dict) and dfc.get('chat_id') not in existing_ids:
+                            merged.append(dfc)
+                    await db.update_channel_setting(chat_id, 'force_subscribe_channels', json.dumps(merged))
             await show_channel_settings(query, db, chat_id, user_id, context)
 
         elif data.startswith('edit_welcome:'):
@@ -1212,14 +1308,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import config as _cfg
             clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
             promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
+            wm_raw = await db.get_platform_setting('global_watermark_enabled', 'false')
+            wm_on = wm_raw.lower() == 'true' if isinstance(wm_raw, str) else bool(wm_raw)
+            wm_status = '\u2705 ON' if wm_on else '\u274c OFF'
             await query.edit_message_text(
                 '\u2699\ufe0f FEATURE TOGGLES\n\n'
                 f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
-                f'\U0001f504 Cross Promotion: {promo_status}\n\n'
+                f'\U0001f504 Cross Promotion: {promo_status}\n'
+                f'\U0001f3a8 Global Watermark: {wm_status}\n\n'
                 'Toggle features on/off for the entire platform:',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
                     [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
+                    [InlineKeyboardButton(f'\U0001f3a8 Watermark: {wm_status}', callback_data='sa_toggle_watermark')],
                     [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
                 ])
             )
@@ -1233,19 +1334,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = 'ENABLED' if _cfg.ENABLE_CLONING else 'DISABLED'
             await query.answer(f'Clone Bot feature {status}!', show_alert=True)
             # Re-show toggles
-            clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
-            promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
-            await query.edit_message_text(
-                '\u2699\ufe0f FEATURE TOGGLES\n\n'
-                f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
-                f'\U0001f504 Cross Promotion: {promo_status}\n\n'
-                'Toggle features on/off for the entire platform:',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
-                    [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
-                    [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
-                ])
-            )
+            query.data = 'sa_feature_toggles'
+            await button_callback(update, context)
 
         elif data == 'sa_toggle_cross_promo':
             if user_id not in __import__('config').SUPERADMIN_IDS:
@@ -1255,19 +1345,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _cfg.ENABLE_CROSS_PROMO = not _cfg.ENABLE_CROSS_PROMO
             status = 'ENABLED' if _cfg.ENABLE_CROSS_PROMO else 'DISABLED'
             await query.answer(f'Cross Promotion {status}!', show_alert=True)
-            clone_status = '\u2705 ON' if _cfg.ENABLE_CLONING else '\u274c OFF'
-            promo_status = '\u2705 ON' if _cfg.ENABLE_CROSS_PROMO else '\u274c OFF'
-            await query.edit_message_text(
-                '\u2699\ufe0f FEATURE TOGGLES\n\n'
-                f'\U0001f9ec Clone Bot Feature: {clone_status}\n'
-                f'\U0001f504 Cross Promotion: {promo_status}\n\n'
-                'Toggle features on/off for the entire platform:',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f'\U0001f9ec Clone Bot: {clone_status}', callback_data='sa_toggle_cloning')],
-                    [InlineKeyboardButton(f'\U0001f504 Cross Promo: {promo_status}', callback_data='sa_toggle_cross_promo')],
-                    [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
-                ])
-            )
+            query.data = 'sa_feature_toggles'
+            await button_callback(update, context)
+
+        elif data == 'sa_toggle_watermark':
+            if user_id not in __import__('config').SUPERADMIN_IDS:
+                await query.answer('Access denied', show_alert=True)
+                return
+            wm_raw = await db.get_platform_setting('global_watermark_enabled', 'false')
+            wm_on = wm_raw.lower() == 'true' if isinstance(wm_raw, str) else bool(wm_raw)
+            new_wm = not wm_on
+            await db.set_platform_setting('global_watermark_enabled', 'true' if new_wm else 'false')
+            status = 'ENABLED' if new_wm else 'DISABLED'
+            await query.answer(f'Global Watermark {status}!', show_alert=True)
+            query.data = 'sa_feature_toggles'
+            await button_callback(update, context)
 
         elif data == 'sa_edit_upi':
             context.user_data['awaiting_upi_input'] = True
