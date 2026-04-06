@@ -285,6 +285,132 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'admin_panel' or data == 'dashboard':
             await show_dashboard(update, context, edit=True)
 
+        elif data == 'default_welcome_msg':
+            # Show default welcome message settings for all channels
+            channels = await db.get_owner_channels(user_id)
+            # Get current default from first channel or platform_settings
+            default_msg = None
+            try:
+                row = await db.pool.fetchrow(
+                    "SELECT value FROM platform_settings WHERE key = $1",
+                    f'owner_{user_id}_default_welcome'
+                )
+                if row:
+                    default_msg = row['value']
+            except Exception:
+                pass
+            if not default_msg:
+                # Fallback: use first channel's welcome message
+                if channels:
+                    ch = await db.get_channel(channels[0]['chat_id'])
+                    default_msg = ch.get('welcome_message', '') if ch else ''
+            current = default_msg or 'Not set'
+            ch_count = len(channels) if channels else 0
+            text = (
+                '\U0001f4e9 DEFAULT WELCOME MESSAGE\n\n'
+                '\u2501\u2501\u2501 Current Message \u2501\u2501\u2501\n\n'
+                f'{current}\n\n'
+                '\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n'
+                f'This message will be applied to ALL your channels ({ch_count} channels).\n\n'
+                'Send me the new welcome message.\n\n'
+                'Available variables:\n'
+                '{first_name} - User first name\n'
+                '{username} - Username\n'
+                '{channel_name} - Channel name\n'
+                '{member_count} - Member count\n'
+                '{referral_link} - Referral link\n\n'
+                'Send /cancel to cancel.'
+            )
+            context.user_data['editing_default_welcome'] = True
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('Cancel', callback_data='dashboard')]
+                ])
+            )
+
+        elif data == 'default_force_sub':
+            # Show force sub settings that apply to all channels
+            channels = await db.get_owner_channels(user_id)
+            ch_count = len(channels) if channels else 0
+            # Check how many have force sub enabled
+            enabled_count = 0
+            force_sub_channels = []
+            for ch in (channels or []):
+                full_ch = await db.get_channel(ch['chat_id'])
+                if full_ch and full_ch.get('force_subscribe_enabled'):
+                    enabled_count += 1
+                fsub_raw = full_ch.get('force_subscribe_channels') or [] if full_ch else []
+                if isinstance(fsub_raw, str):
+                    try:
+                        import json as _json
+                        fsub_raw = _json.loads(fsub_raw)
+                    except Exception:
+                        fsub_raw = []
+                if fsub_raw and isinstance(fsub_raw, list):
+                    for fc in fsub_raw:
+                        title = fc.get('title', 'Unknown') if isinstance(fc, dict) else str(fc)
+                        if title not in [x for x in force_sub_channels]:
+                            force_sub_channels.append(title)
+
+            all_enabled = enabled_count == ch_count and ch_count > 0
+            status = '\U0001f7e2 Enabled' if all_enabled else ('\U0001f7e1 Partial' if enabled_count > 0 else '\U0001f534 Disabled')
+            text = (
+                f'\U0001f512 FORCE SUBSCRIBE (All Channels)\n\n'
+                f'Status: {status} ({enabled_count}/{ch_count} channels)\n\n'
+            )
+            if force_sub_channels:
+                text += 'Required channels:\n'
+                for i, title in enumerate(force_sub_channels[:10], 1):
+                    text += f'{i}. {title} \u2705\n'
+                text += '\n'
+            text += (
+                'Use the buttons below to enable or disable\n'
+                'force subscribe for ALL your channels at once.'
+            )
+            toggle_text = '\U0001f534 Disable All' if all_enabled else '\U0001f7e2 Enable All'
+            buttons = [
+                [InlineKeyboardButton(toggle_text, callback_data='toggle_default_force_sub')],
+            ]
+            # Per-channel force sub settings
+            for ch in (channels or []):
+                full_ch = await db.get_channel(ch['chat_id'])
+                fs_on = full_ch.get('force_subscribe_enabled', False) if full_ch else False
+                icon = '\u2705' if fs_on else '\u274c'
+                title = ch.get('chat_title', 'Unknown')[:20]
+                buttons.append([
+                    InlineKeyboardButton(f'{icon} {title}', callback_data=f'toggle_force_sub:{ch["chat_id"]}'),
+                    InlineKeyboardButton('\u2699\ufe0f Settings', callback_data=f'force_sub_settings:{ch["chat_id"]}'),
+                ])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+
+        elif data == 'toggle_default_force_sub':
+            # Toggle force sub for ALL channels
+            channels = await db.get_owner_channels(user_id)
+            if not channels:
+                await query.answer('No channels found!', show_alert=True)
+                return
+            # Check current state - if all enabled, disable all; otherwise enable all
+            all_enabled = True
+            for ch in channels:
+                full_ch = await db.get_channel(ch['chat_id'])
+                if not full_ch or not full_ch.get('force_subscribe_enabled'):
+                    all_enabled = False
+                    break
+            new_state = not all_enabled
+            for ch in channels:
+                await db.update_channel_setting(ch['chat_id'], 'force_subscribe_enabled', new_state)
+            state_text = 'enabled' if new_state else 'disabled'
+            await query.answer(f'Force subscribe {state_text} for all {len(channels)} channels!', show_alert=True)
+            # Re-show the menu by simulating the callback
+            # Rebuild the force sub view
+            query.data = 'default_force_sub'
+            await button_callback(update, context)
+
         elif data == 'close':
             await query.delete_message()
 
@@ -1313,6 +1439,38 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user_id = update.effective_user.id
+
+    # Handle default welcome message editing (applies to all channels)
+    editing_default_welcome = context.user_data.get('editing_default_welcome')
+    if editing_default_welcome:
+        del context.user_data['editing_default_welcome']
+        new_message = update.message.text
+        # Save as owner default
+        try:
+            await db.pool.execute(
+                "INSERT INTO platform_settings (key, value, updated_at) VALUES ($1, $2, NOW()) "
+                "ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()",
+                f'owner_{user_id}_default_welcome', new_message
+            )
+        except Exception as e:
+            logger.error(f'Failed to save default welcome: {e}')
+        # Apply to ALL owner's channels
+        channels = await db.get_owner_channels(user_id)
+        updated = 0
+        for ch in (channels or []):
+            try:
+                await db.update_channel_setting(ch['chat_id'], 'welcome_message', new_message)
+                updated += 1
+            except Exception:
+                pass
+        await update.message.reply_text(
+            f'\u2705 Default welcome message updated and applied to {updated} channel(s)!\n\n'
+            f'Preview:\n{new_message}',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('\U0001f519 Back to Dashboard', callback_data='dashboard')]
+            ])
+        )
+        return True
 
     editing_welcome = context.user_data.get('editing_welcome_for')
     if editing_welcome:
