@@ -1,81 +1,61 @@
-import logging
-
-logger = logging.getLogger(__name__)
-
-EM_DASH_LINE = '\u2014' * 20
-
-async def get_watermark(db, chat_id):
-    """Get watermark text for a channel.
-    Supports per-channel watermark @username set by channel owner.
-    Also supports global watermark for free-plan users."""
-    try:
-        channel = await db.get_channel(chat_id)
-        if not channel:
-            return ''
-
-        # Check per-channel watermark first
-        if channel.get('watermark_enabled') and channel.get('watermark_username'):
-            username = channel['watermark_username']
-            custom_text = channel.get('watermark_text', '')
-            location = channel.get('watermark_location', 'bottom')
-            
-            # Build watermark line
-            wm_line = f"@{username}"
-            if custom_text:
-                wm_line = f"{custom_text}\n@{username}"
-            
-            watermark = f"\n\n{EM_DASH_LINE}\n{wm_line}"
-            # Return watermark - callers can check location via channel settings
-            return watermark
-
-        # Check global watermark setting (superadmin)
-        try:
-            global_enabled = await db.get_platform_setting('global_watermark_enabled', 'false')
-            if global_enabled.lower() != 'true':
-                return ''
-        except Exception:
-            return ''
-
-        # Check if owner is on a paid plan (exempt from global watermark)
-        owner_id = channel.get('owner_id')
-        if owner_id:
-            owner = await db.get_owner(owner_id)
-            if owner and owner.get('tier', 'free').lower() in ('premium', 'business'):
-                return ''
-
-        # Get custom watermark message from superadmin, or use default
-        try:
-            custom_message = await db.get_platform_setting('global_watermark_message', '')
-        except Exception:
-            custom_message = ''
-
-        if custom_message:
-            name = channel.get('chat_title', '')
-            custom_message = custom_message.replace('{channel_name}', name)
-            custom_message = custom_message.replace('{bot_name}', 'Growth Engine')
-            return f"\n\n{EM_DASH_LINE}\n{custom_message}"
-
-        return ''
-    except Exception as e:
-        logger.warning(f'Watermark error: {e}')
-        return ''
-
-async def add_watermark(text, channel_name=None, owner_name=None):
-    if not text:
-        return text
-    watermark_parts = []
-    if channel_name:
-        watermark_parts.append(f'\U0001f4e2 {channel_name}')
-    if owner_name:
-        watermark_parts.append(f'by {owner_name}')
-    if not watermark_parts:
-        return text
-    watermark = ' | '.join(watermark_parts)
-    return f"{text}\n\n{EM_DASH_LINE}\n{watermark}"
-
-async def add_media_caption_watermark(caption, channel_name=None):
-    if not caption:
-        caption = ''
-    if channel_name:
-        return f"{caption}\n\n\U0001f4e2 {channel_name}"
-    return caption
+aW1wb3J0IGxvZ2dpbmcKCmxvZ2dlciA9IGxvZ2dpbmcuZ2V0TG9nZ2VyKF9f
+bmFtZV9fKQoKRU1fREFTSF9MSU5FID0gJ1x1MjAxNCcgKiAyMAoKYXN5bmMg
+ZGVmIGdldF93YXRlcm1hcmsoZGIsIGNoYXRfaWQpOgogICAgIiIiR2V0IHdh
+dGVybWFyayB0ZXh0IGZvciBhIGNoYW5uZWwuCiAgICBTdXBwb3J0cyBwZXIt
+Y2hhbm5lbCB3YXRlcm1hcmsgQHVzZXJuYW1lIHNldCBieSBjaGFubmVsIG93
+bmVyLgogICAgQWxzbyBzdXBwb3J0cyBnbG9iYWwgd2F0ZXJtYXJrIGZvciBm
+cmVlLXBsYW4gdXNlcnMuIiIiCiAgICB0cnk6CiAgICAgICAgY2hhbm5lbCA9
+IGF3YWl0IGRiLmdldF9jaGFubmVsKGNoYXRfaWQpCiAgICAgICAgaWYgbm90
+IGNoYW5uZWw6CiAgICAgICAgICAgIHJldHVybiAnJwoKICAgICAgICAjIENo
+ZWNrIHBlci1jaGFubmVsIHdhdGVybWFyayBmaXJzdAogICAgICAgIGlmIGNo
+YW5uZWwuZ2V0KCd3YXRlcm1hcmtfZW5hYmxlZCcpIGFuZCBjaGFubmVsLmdl
+dCgnd2F0ZXJtYXJrX3VzZXJuYW1lJyk6CiAgICAgICAgICAgIHVzZXJuYW1l
+ID0gY2hhbm5lbFsnd2F0ZXJtYXJrX3VzZXJuYW1lJ10KICAgICAgICAgICAg
+Y3VzdG9tX3RleHQgPSBjaGFubmVsLmdldCgnd2F0ZXJtYXJrX3RleHQnLCAn
+JykKICAgICAgICAgICAgbG9jYXRpb24gPSBjaGFubmVsLmdldCgnd2F0ZXJt
+YXJrX2xvY2F0aW9uJywgJ2JvdHRvbScpCiAgICAgICAgICAgIAogICAgICAg
+ICAgICAjIEJ1aWxkIHdhdGVybWFyayBsaW5lCiAgICAgICAgICAgIHdtX2xp
+bmUgPSBmIkB7dXNlcm5hbWV9IgogICAgICAgICAgICBpZiBjdXN0b21fdGV4
+dDoKICAgICAgICAgICAgICAgIHdtX2xpbmUgPSBmInpjdXN0b21fdGV4dH1c
+bkB7dXNlcm5hbWV9IgogICAgICAgICAgICAKICAgICAgICAgICAgd2F0ZXJt
+YXJrID0gZiJcblxue0VNX0RBU0hfTElORX1ce3dtX2xpbmV9IgogICAgICAg
+ICAgICAjIFJldHVybiB3YXRlcm1hcmsgLSBjYWxsZXJzIGNhbiBjaGVjayBs
+b2NhdGlvbiB2aWEgY2hhbm5lbCBzZXR0aW5ncwogICAgICAgICAgICByZXR1
+cm4gd2F0ZXJtYXJrCgogICAgICAgICMgQ2hlY2sgZ2xvYmFsIHdhdGVybWFy
+ayBzZXR0aW5nIChzdXBlcmFkbWluKQogICAgICAgIHRyeToKICAgICAgICAg
+ICAgZ2xvYmFsX2VuYWJsZWQgPSBhd2FpdCBkYi5nZXRfcGxhdGZvcm1fc2V0
+dGluZygnZ2xvYmFsX3dhdGVybWFya19lbmFibGVkJywgJ2ZhbHNlJykKICAg
+ICAgICAgICAgaWYgZ2xvYmFsX2VuYWJsZWQubG93ZXIoKSAhPSAndHJ1ZSc6
+CiAgICAgICAgICAgICAgICByZXR1cm4gJycKICAgICAgICBleGNlcHQgRXhjZXB0
+aW9uOgogICAgICAgICAgICByZXR1cm4gJycKCiAgICAgICAgIyBDaGVjayBpZiBv
+d25lciBpcyBvbiBhIHBhaWQgcGxhbiAoZXhlbXB0IGZyb20gZ2xvYmFsIHdh
+dGVybWFyaykKICAgICAgICBvd25lcl9pZCA9IGNoYW5uZWwuZ2V0KCdvd25l
+cl9pZCcpCiAgICAgICAgaWYgb3duZXJfaWQ6CiAgICAgICAgICAgIG93bmVy
+ID0gYXdhaXQgZGIuZ2V0X293bmVyKG93bmVyX2lkKQogICAgICAgICAgICBp
+ZiBvd25lciBhbmQgb3duZXIuZ2V0KCd0aWVyJywgJ2ZyZWUnKS5sb3dlcigp
+IGluICgncHJlbWl1bScsICdidXNpbmVzcycpOgogICAgICAgICAgICAgICAg
+cmV0dXJuICcnCgogICAgICAgICMgR2V0IHdhdGVybWFyayB1c2VybmFtZSBm
+cm9tIHN1cGVyYWRtaW4gc2V0dGluZ3MKICAgICAgICB0cnk6CiAgICAgICAg
+ICAgIGdsb2JhbF93bV91c2VybmFtZSA9IGF3YWl0IGRiLmdldF9wbGF0Zm9y
+bV9zZXR0aW5nKCdnbG9iYWxfd2F0ZXJtYXJrX3VzZXJuYW1lJywgJycpCiAg
+ICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgZ2xvYmFsX3dt
+X3VzZXJuYW1lID0gJycKCiAgICAgICAgaWYgZ2xvYmFsX3dtX3VzZXJuYW1l
+OgogICAgICAgICAgICByZXR1cm4gZiJcblxue0VNX0RBU0hfTElORX1cQHtn
+bG9iYWxfd21fdXNlcm5hbWV9IgoKICAgICAgICByZXR1cm4gJycKICAgIGV4
+Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICBsb2dnZXIud2FybmluZyhm
+J1dhdGVybWFyayBlcnJvcjoge2V9JykKICAgICAgICByZXR1cm4gJycKCmFz
+eW5jIGRlZiBhZGRfd2F0ZXJtYXJrKHRleHQsIGNoYW5uZWxfbmFtZT1Ob25l
+LCBvd25lcl9uYW1lPU5vbmUpOgogICAgaWYgbm90IHRleHQ6CiAgICAgICAg
+cmV0dXJuIHRleHQKICAgIHdhdGVybWFya19wYXJ0cyA9IFtdCiAgICBpZiBj
+aGFubmVsX25hbWU6CiAgICAgICAgd2F0ZXJtYXJrX3BhcnRzLmFwcGVuZChm
+J1xVMDAwMWY0ZTIge2NoYW5uZWxfbmFtZX0nKQogICAgaWYgb3duZXJfbmFt
+ZToKICAgICAgICB3YXRlcm1hcmtfcGFydHMuYXBwZW5kKGYnYnkge293bmVy
+X25hbWV9JykKICAgIGlmIG5vdCB3YXRlcm1hcmtfcGFydHM6CiAgICAgICAg
+cmV0dXJuIHRleHQKICAgIHdhdGVybWFyayA9ICcgfCAnLmpvaW4od2F0ZXJt
+YXJrX3BhcnRzKQogICAgcmV0dXJuIGYie3RleHR9XG5cbntFTV9EQVNIX0xJ
+TkV9XG57d2F0ZXJtYXJrfSIKCmFzeW5jIGRlZiBhZGRfbWVkaWFfY2FwdGlv
+bl93YXRlcm1hcmsoY2FwdGlvbiwgY2hhbm5lbF9uYW1lPU5vbmUpOgogICAg
+aWYgbm90IGNhcHRpb246CiAgICAgICAgY2FwdGlvbiA9ICcnCiAgICBpZiBj
+aGFubmVsX25hbWU6CiAgICAgICAgcmV0dXJuIGYie2NhcHRpb259XG5cbntc
+VTAwMDFmNGUyfSB7Y2hhbm5lbF9uYW1lfSIKICAgIHJldHVybiBjYXB0aW9u
+Cg==
