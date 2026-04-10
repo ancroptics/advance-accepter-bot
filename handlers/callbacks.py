@@ -338,8 +338,8 @@ async def show_pending_requests(query, context, db, chat_id, user_id):
     text += f'\U0001f4be Tracked in bot: {db_pending_count}\n'
     if untracked > 0:
         text += f'\u26a0\ufe0f Untracked (old): {untracked}\n'
-        text += f'\n\U0001f4a1 {untracked} old request(s) were made before the bot was added.\n'
-        text += 'To approve old requests: Telegram app \u2192 Channel \u2192 Join Requests\n'
+        text += f'\n\U0001f4a1 {untracked} request(s) not yet imported.\n'
+        text += 'Hit \U0001f504 Sync Pending to import & manage them!\n'
         text += '\u2705 All new requests are tracked automatically!\n'
     text += f'\nTotal: {pending_count}\n\n'
     buttons = []
@@ -1137,28 +1137,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_info = await context.bot.get_chat(chat_id)
                 telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
 
-                # Get our DB pending count
+                # Get our DB pending count BEFORE sync
+                db_pending_before = await db.get_pending_count(chat_id)
+
+                # If Telegram has more pending than DB, fetch and save the untracked ones
+                newly_imported = 0
+                if telegram_pending > db_pending_before:
+                    from handlers.channel_detection import _fetch_all_pending_requests
+                    pending_users = await _fetch_all_pending_requests(context.bot.token, chat_id)
+                    for req in pending_users:
+                        req_user = req.get('user', {})
+                        req_user_id = req_user.get('id')
+                        if not req_user_id:
+                            continue
+                        try:
+                            await db.save_join_request(
+                                user_id=req_user_id,
+                                chat_id=chat_id,
+                                username=req_user.get('username'),
+                                first_name=req_user.get('first_name'),
+                                user_language=req_user.get('language_code'),
+                            )
+                            await db.upsert_end_user(
+                                user_id=req_user_id,
+                                username=req_user.get('username'),
+                                first_name=req_user.get('first_name'),
+                                last_name=req_user.get('last_name'),
+                                language_code=req_user.get('language_code'),
+                                source='sync_import',
+                                source_channel=chat_id,
+                            )
+                            newly_imported += 1
+                        except Exception:
+                            pass
+
+                # Get updated DB count AFTER import
                 db_pending = await db.get_pending_count(chat_id)
 
-                # Update stored count with Telegram's real number
-                await db.update_channel_setting(chat_id, 'pending_requests', telegram_pending)
+                # Update stored count to match reality
+                await db.update_channel_setting(chat_id, 'pending_requests', db_pending)
 
                 msg = (f'\u2705 Sync Complete!\n\n'
                        f'\U0001f4ca Telegram pending: {telegram_pending}\n'
                        f'\U0001f4be Tracked in DB: {db_pending}\n\n')
 
-                if telegram_pending > db_pending:
-                    diff = telegram_pending - db_pending
-                    msg += (f'\u26a0\ufe0f {diff} old request(s) not tracked in bot.\n\n'
-                            f'\U0001f4a1 These were made before the bot was added as admin.\n'
-                            f'To approve them: Open Telegram \u2192 Channel \u2192 Recent Actions \u2192 Join Requests.\n\n'
-                            f'\u2705 All new requests are now tracked and managed automatically!')
-                elif telegram_pending == 0 and db_pending == 0:
+                if newly_imported > 0:
+                    msg += (f'\U0001f50d Imported {newly_imported} previously untracked request(s)!\n'
+                            f'They are now fully manageable from the bot.\n\n')
+
+                if telegram_pending == 0 and db_pending == 0:
                     msg += '\U0001f389 No pending requests!'
                 elif telegram_pending == 0 and db_pending > 0:
                     msg += ('\U0001f504 Cleaning up stale DB records...\n'
                             'Some tracked requests may have been approved/declined externally.')
-                    # Clean up stale DB records
                     try:
                         await db.cleanup_stale_pending(chat_id)
                     except Exception:
