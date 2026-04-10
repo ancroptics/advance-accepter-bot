@@ -58,55 +58,27 @@ class SchedulerService:
         for ch in channels:
             chat_id = ch['chat_id']
             try:
-                chat_info = await self.application.bot.get_chat(chat_id)
-                telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
+                # Use raw API to get real pending count
+                from handlers.channel_detection import get_telegram_pending_count
+                telegram_pending = await get_telegram_pending_count(self.application.bot.token, chat_id)
                 db_pending = await db.get_pending_count(chat_id)
 
-                # If Telegram has more pending than DB, fetch & import the untracked ones
+                # If Telegram has more pending than DB, log the discrepancy
+                # NOTE: We cannot enumerate individual pending requests via Bot API
+                # They are captured via chat_join_request updates as they arrive
                 if telegram_pending > db_pending and telegram_pending > 0:
-                    logger.info(f"Channel {chat_id}: {telegram_pending} Telegram pending vs {db_pending} in DB — importing untracked")
-                    try:
-                        from handlers.channel_detection import _fetch_all_pending_requests
-                        pending_users = await _fetch_all_pending_requests(self.application.bot.token, chat_id)
-                        imported = 0
-                        for req in pending_users:
-                            req_user = req.get('user', {})
-                            req_user_id = req_user.get('id')
-                            if not req_user_id:
-                                continue
-                            try:
-                                await db.save_join_request(
-                                    user_id=req_user_id,
-                                    chat_id=chat_id,
-                                    username=req_user.get('username'),
-                                    first_name=req_user.get('first_name'),
-                                    user_language=req_user.get('language_code'),
-                                )
-                                await db.upsert_end_user(
-                                    user_id=req_user_id,
-                                    username=req_user.get('username'),
-                                    first_name=req_user.get('first_name'),
-                                    last_name=req_user.get('last_name'),
-                                    language_code=req_user.get('language_code'),
-                                    source='scheduler_import',
-                                    source_channel=chat_id,
-                                )
-                                imported += 1
-                            except Exception:
-                                pass
-                        if imported > 0:
-                            logger.info(f"Scheduler imported {imported} untracked requests for {chat_id}")
-                    except Exception as e:
-                        logger.error(f"Error importing untracked requests for {chat_id}: {e}")
+                    logger.info(f"Channel {chat_id}: {telegram_pending} Telegram pending vs {db_pending} in DB")
 
                 # Refresh DB count after potential import and update stored value
                 db_pending = await db.get_pending_count(chat_id)
                 await db.update_channel_setting(chat_id, 'pending_requests', db_pending)
+                await db.update_channel_setting(chat_id, 'telegram_pending', telegram_pending)
             except Exception as e:
                 if 'chat not found' in str(e).lower() or 'bot was kicked' in str(e).lower():
                     logger.warning(f"Cannot access channel {chat_id}: {e}")
                 else:
                     logger.debug(f"Sync error for {chat_id}: {e}")
+
     async def _process_force_sub_timeouts(self):
         """Auto-approve users whose force sub timeout has expired."""
         db = self.application.bot_data.get('db')
