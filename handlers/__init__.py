@@ -8,6 +8,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from handlers.callbacks import callback_router
 from handlers.channel_detection import channel_detection_handler
 from handlers.join_request import join_request_handler
+from handlers.scan_requests import scan_command
+from handlers.batch_approve import batch_approve_command, batch_button_handler
 import config
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,8 @@ def register_handlers(application):
     application.add_handler(CommandHandler('superadmin', superadmin_handler))
     application.add_handler(CommandHandler('activate_premium', activate_premium_handler))
     application.add_handler(CommandHandler('deactivate_premium', deactivate_premium_handler))
+    application.add_handler(CommandHandler('scan', scan_command))
+    application.add_handler(CommandHandler('batch', batch_approve_command))
 
     # 2. Chat member handler (bot added/removed from channels)
     application.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -157,6 +161,9 @@ def register_handlers(application):
     from handlers.template_mgmt import view_template_handler, delete_template_handler
     application.add_handler(CallbackQueryHandler(view_template_handler, pattern=r'^jiew_template:'))
     application.add_handler(CallbackQueryHandler(delete_template_handler, pattern=r'^delete_template:'))
+
+    # 5f. Batch approve/decline buttons
+    application.add_handler(CallbackQueryHandler(batch_button_handler, pattern=r'^batch_'))
 
     # 6. Callback query handler (catch-all for buttons)
     application.add_handler(CallbackQueryHandler(callback_router))
