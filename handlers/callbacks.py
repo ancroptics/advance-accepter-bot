@@ -233,8 +233,8 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     pending_db = 0
     try:
         if context:
-            chat_info = await context.bot.get_chat(chat_id)
-            pending_db = getattr(chat_info, 'pending_join_request_count', 0) or 0
+            from handlers.channel_detection import get_telegram_pending_count
+            pending_db = await get_telegram_pending_count(context.bot.token, chat_id)
         else:
             pending_db = await db.get_pending_count(chat_id)
     except Exception:
@@ -312,8 +312,8 @@ async def show_pending_requests(query, context, db, chat_id, user_id):
     # Try to get actual pending count from Telegram API
     telegram_pending = 0
     try:
-        chat_info = await context.bot.get_chat(chat_id)
-        telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
+        from handlers.channel_detection import get_telegram_pending_count
+        telegram_pending = await get_telegram_pending_count(context.bot.token, chat_id)
     except Exception as e:
         logger.warning(f'Could not get Telegram pending count for {chat_id}: {e}')
 
@@ -1134,8 +1134,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer('Syncing pending requests...', show_alert=False)
             try:
                 # Get real pending count from Telegram
-                chat_info = await context.bot.get_chat(chat_id)
-                telegram_pending = getattr(chat_info, 'pending_join_request_count', 0) or 0
+                from handlers.channel_detection import get_telegram_pending_count
+                telegram_pending = await get_telegram_pending_count(context.bot.token, chat_id)
 
                 # Get our DB pending count BEFORE sync
                 db_pending_before = await db.get_pending_count(chat_id)
@@ -1143,8 +1143,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # If Telegram has more pending than DB, fetch and save the untracked ones
                 newly_imported = 0
                 if telegram_pending > db_pending_before:
-                    from handlers.channel_detection import _fetch_all_pending_requests
-                    pending_users = await _fetch_all_pending_requests(context.bot.token, chat_id)
+                    # NOTE: Telegram Bot API has NO endpoint to enumerate pending requests.
+                    # We can only detect the count discrepancy. Individual requests are
+                    # captured via chat_join_request updates as they arrive.
+                    pending_users = []  # Cannot enumerate — API doesn't exist
                     for req in pending_users:
                         req_user = req.get('user', {})
                         req_user_id = req_user.get('id')
