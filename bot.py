@@ -14,6 +14,7 @@ from database.connection import DatabasePool
 from database.models import DatabaseModels
 from services.clone_manager import CloneManager
 from services.scheduler_service import SchedulerService
+from services.telethon_client import TelethonService
 from handlers import register_all_handlers
 
 logging.basicConfig(
@@ -33,6 +34,7 @@ class Bot:
         self.scheduler = None
         self.clone_manager = None
         self.health_runner = None
+        self.telethon = None
 
     async def start(self):
         try:
@@ -54,11 +56,20 @@ class Bot:
             await self.db.run_migrations()
             logger.info('Database connected and tables created')
 
+            self.telethon = TelethonService()
+            telethon_ok = await self.telethon.start()
+            if telethon_ok:
+                logger.info('Telethon MTProto client connected - can fetch old pending join requests')
+            else:
+                logger.warning('Telethon not available - set TELETHON_API_ID, TELETHON_API_HASH, TELETHON_SESSION_STRING')
+
             builder = Application.builder().token(config.BOT_TOKEN)
             builder.read_timeout(30).write_timeout(30).connect_timeout(30)
             self.app = builder.build()
+
             self.app.bot_data['db'] = self.db
             self.app.bot_data['db_pool'] = self.db_pool
+            self.app.bot_data['telethon'] = self.telethon
 
             await self._load_persisted_settings()
 
@@ -119,11 +130,17 @@ class Bot:
             if not channels:
                 logger.info('No active channels to sync')
                 return
+
             for ch in channels:
                 chat_id = ch['chat_id']
                 try:
+                    if self.telethon and self.telethon.available:
+                        await self._telethon_sync_channel(chat_id)
+                    else:
+                        pending_count = await self.db.get_pending_count(chat_id)
+                        await self.db.update_channel_setting(chat_id, 'pending_requests', pending_count)
+
                     pending_count = await self.db.get_pending_count(chat_id)
-                    await self.db.update_channel_setting(chat_id, 'pending_requests', pending_count)
                     if pending_count > 0:
                         stale = await self.db.get_stale_pending_requests(chat_id, hours=48)
                         cleaned = 0
@@ -143,12 +160,55 @@ class Bot:
                             new_pending = await self.db.get_pending_count(chat_id)
                             await self.db.update_channel_setting(chat_id, 'pending_requests', new_pending)
                             logger.info(f'Sync: cleaned {cleaned} stale requests in {chat_id}, pending now {new_pending}')
-                    logger.info(f'Synced channel {chat_id}: {pending_count} pending')
+
+                    logger.info(f'Synced channel {chat_id}: {await self.db.get_pending_count(chat_id)} pending')
                 except Exception as e:
                     logger.warning(f'Failed to sync channel {chat_id}: {e}')
+
             logger.info('Pending request sync complete')
         except Exception as e:
             logger.exception(f'Startup sync error: {e}')
+
+    async def _telethon_sync_channel(self, chat_id):
+        try:
+            logger.info(f'Telethon: fetching pending join requests for {chat_id}...')
+            requests = await self.telethon.get_pending_join_requests(chat_id, limit=50000)
+            if requests is None:
+                logger.warning(f'Telethon: could not fetch requests for {chat_id}')
+                return 0
+
+            logger.info(f'Telethon: found {len(requests)} pending join requests for {chat_id}')
+            saved = 0
+            for req in requests:
+                try:
+                    await self.db.save_join_request(
+                        user_id=req['user_id'],
+                        chat_id=chat_id,
+                        username=req.get('username'),
+                        first_name=req.get('first_name'),
+                    )
+                    saved += 1
+                except Exception as e:
+                    logger.debug(f'Could not save request {req["user_id"]}: {e}')
+
+                try:
+                    await self.db.upsert_end_user(
+                        user_id=req['user_id'],
+                        username=req.get('username'),
+                        first_name=req.get('first_name'),
+                        source='telethon_sync',
+                        source_channel=chat_id,
+                    )
+                except Exception:
+                    pass
+
+            pending = await self.db.get_pending_count(chat_id)
+            await self.db.update_channel_setting(chat_id, 'pending_requests', pending)
+            logger.info(f'Telethon: saved {saved} requests for {chat_id}, total pending in DB: {pending}')
+            return saved
+        except Exception as e:
+            logger.exception(f'Telethon sync error for {chat_id}: {e}')
+            return 0
 
     async def _self_ping_loop(self):
         import os
@@ -167,6 +227,8 @@ class Bot:
     async def stop(self):
         logger.info('Shutting down...')
         try:
+            if self.telethon:
+                await self.telethon.stop()
             if self.scheduler:
                 await self.scheduler.stop()
             if self.health_runner:
