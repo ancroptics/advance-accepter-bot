@@ -23,7 +23,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def error_handler(update, context):
-    """Log errors caused by updates."""
     logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
 
 class Bot:
@@ -38,8 +37,6 @@ class Bot:
     async def start(self):
         try:
             logger.info('Starting Telegram Growth Engine...')
-
-            # Start health server FIRST so Render detects the port quickly
             health_app = web.Application()
             health_app.router.add_get('/', self._health_check)
             health_app.router.add_get('/health', self._health_check)
@@ -60,11 +57,9 @@ class Bot:
             builder = Application.builder().token(config.BOT_TOKEN)
             builder.read_timeout(30).write_timeout(30).connect_timeout(30)
             self.app = builder.build()
-
             self.app.bot_data['db'] = self.db
             self.app.bot_data['db_pool'] = self.db_pool
 
-            # Load persisted feature toggles from database
             await self._load_persisted_settings()
 
             self.scheduler = SchedulerService(self.app)
@@ -104,7 +99,6 @@ class Bot:
             sys.exit(1)
 
     async def _load_persisted_settings(self):
-        """Load feature toggle settings from database to survive redeploys."""
         try:
             toggle_keys = ['ENABLE_PREMIUM', 'ENABLE_CLONING', 'ENABLE_CROSS_PROMO']
             for key in toggle_keys:
@@ -157,13 +151,12 @@ class Bot:
             logger.exception(f'Startup sync error: {e}')
 
     async def _self_ping_loop(self):
-        """Ping own health endpoint every 4 minutes to prevent Render free-tier sleep."""
         import os
         url = os.getenv('RENDER_EXTERNAL_URL', f'http://localhost:{config.PORT}')
         health_url = f"{url}/health"
         logger.info(f'Self-ping loop started, target: {health_url}')
         while True:
-            await asyncio.sleep(240)  # 4 minutes
+            await asyncio.sleep(240)
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(health_url, timeout=10)
