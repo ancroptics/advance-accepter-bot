@@ -1,9 +1,10 @@
 import logging
 import os
+import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetChatInviteImportersRequest
-from telethon.tl.types import InputPeerChannel
+from telethon.tl.types import InputPeerChannel, InputUser
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class TelethonService:
         """Fetch all pending join requests for a channel/group using MTProto API.
 
         Returns list of dicts: [{user_id, first_name, username, date}, ...]
+        Uses pagination with rate-limit-safe delays for large channels (44k+ requests).
         """
         if not self.available or not self.client:
             return None
@@ -59,25 +61,31 @@ class TelethonService:
             entity = await self.client.get_entity(chat_id)
 
             all_requests = []
-            offset_user = None
             offset_date = None
+            offset_user = InputUser(user_id=0, access_hash=0)
+            is_first = True
 
             while True:
+                batch_limit = min(limit - len(all_requests), 100)
                 kwargs = {
                     'peer': entity,
                     'requested': True,
-                    'limit': min(limit - len(all_requests), 100),
+                    'limit': batch_limit,
+                    'offset_user': offset_user,
                 }
-                if offset_date:
-                    kwargs['offset_date'] = offset_date
-                if offset_user:
-                    kwargs['offset_user'] = offset_user
-                else:
-                    from telethon.tl.types import InputUser
-                    kwargs['offset_user'] = InputUser(user_id=0, access_hash=0)
+                # First call: offset_date=0 means "start from beginning"
+                # Subsequent calls: use the date from the last result
+                if is_first:
                     kwargs['offset_date'] = 0
+                    is_first = False
+                else:
+                    kwargs['offset_date'] = offset_date
 
-                result = await self.client(GetChatInviteImportersRequest(**kwargs))
+                try:
+                    result = await self.client(GetChatInviteImportersRequest(**kwargs))
+                except Exception as e:
+                    logger.warning(f'GetChatInviteImporters page failed for {chat_id}: {e}')
+                    break
 
                 if not result.importers:
                     break
@@ -91,7 +99,7 @@ class TelethonService:
                         'date': imp.date,
                     })
 
-                if len(all_requests) >= limit or len(result.importers) < kwargs['limit']:
+                if len(all_requests) >= limit or len(result.importers) < batch_limit:
                     break
 
                 # Set offset for next page
@@ -102,6 +110,11 @@ class TelethonService:
                     offset_user = InputUser(user_id=last_user.id, access_hash=last_user.access_hash)
                 else:
                     break
+
+                # Rate limit protection: pause every 50 pages (5000 requests)
+                if len(all_requests) % 5000 == 0:
+                    logger.info(f'Fetched {len(all_requests)} requests so far for {chat_id}, pausing 2s...')
+                    await asyncio.sleep(2)
 
             logger.info(f'Fetched {len(all_requests)} pending join requests for {chat_id}')
             return all_requests
