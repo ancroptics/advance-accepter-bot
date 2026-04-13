@@ -64,11 +64,9 @@ async def _handle_bot_added(update, context, chat, db):
     logger.info(f'Bot added to channel: {chat.title} ({chat.id}) by user {user.id}')
 
     try:
-        # Check permissions
         bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
         can_invite = getattr(bot_member, 'can_invite_users', False)
 
-        # Save channel to database
         await db.save_channel(
             chat_id=chat.id,
             chat_title=chat.title or 'Unknown',
@@ -77,26 +75,28 @@ async def _handle_bot_added(update, context, chat, db):
             username=chat.username
         )
 
-        # Get channel info
+        member_count = 0
         try:
-            chat_info = await context.bot.get_chat(chat.id)
             member_count = await context.bot.get_chat_member_count(chat.id)
             await db.update_channel_setting(chat.id, 'member_count', member_count)
         except Exception as e:
-            logger.warning(f'Could not get chat info: {e}')
-            member_count = 0
+            logger.warning(f'Could not get member count: {e}')
 
-        # Fetch existing pending join requests using Telethon (MTProto)
-        pending_count = 0
+        # STEP 1: Always get the real pending count via raw Bot API (fast, reliable)
+        # This is the ground truth - never rely solely on Telethon for the count
+        pending_count = await get_telegram_pending_count(context.bot.token, chat.id)
+        logger.info(f'Raw API pending count for {chat.title}: {pending_count}')
+
+        # STEP 2: Try Telethon enumeration to import individual requests into DB
+        telethon_enumerated = 0
         telethon = context.application.bot_data.get('telethon')
-        if telethon and telethon.available:
+        if telethon and telethon.available and pending_count > 0:
             try:
-                logger.info(f'Fetching existing pending requests for {chat.id} via Telethon...')
-                requests = await telethon.get_pending_join_requests(chat.id, limit=50000)
+                logger.info(f'Fetching {pending_count} pending requests for {chat.id} via Telethon...')
+                requests = await telethon.get_pending_join_requests(chat.id, limit=pending_count + 1000)
                 if requests:
-                    pending_count = len(requests)
-                    logger.info(f'Found {pending_count} pending join requests for {chat.title}')
-                    # Save all pending requests to database
+                    telethon_enumerated = len(requests)
+                    logger.info(f'Telethon fetched {telethon_enumerated} pending join requests for {chat.title}')
                     saved = 0
                     for req in requests:
                         try:
@@ -121,19 +121,17 @@ async def _handle_bot_added(update, context, chat, db):
                             pass
                     logger.info(f'Saved {saved} pending requests for {chat.title}')
                 else:
-                    logger.info(f'No pending requests found for {chat.title} via Telethon')
+                    logger.warning(f'Telethon returned empty for {chat.title} despite API showing {pending_count} pending')
             except Exception as e:
-                logger.warning(f'Telethon fetch pending failed for {chat.id}: {e}')
-        else:
-            # Fallback: use raw API to get count + check DB
-            pending_count = await get_telegram_pending_count(context.bot.token, chat.id)
-            db_count = await db.get_pending_count(chat.id)
-            pending_count = max(pending_count, db_count)
-            logger.info(f'Telethon not available, using API count: {pending_count}')
+                logger.warning(f'Telethon fetch failed for {chat.id}: {e}')
+        elif not telethon or not telethon.available:
+            logger.info(f'Telethon not available - using raw API count only ({pending_count})')
 
+        # Use the larger of raw API count vs Telethon enumerated count
+        pending_count = max(pending_count, telethon_enumerated)
         await db.update_channel_setting(chat.id, 'pending_requests', pending_count)
 
-        # Send notification to the user who added the bot
+        # Build notification message
         status_parts = []
         status_parts.append(f'\u2705 Bot added to <b>{chat.title}</b>')
         status_parts.append(f'\n\U0001f4ca Members: {member_count}')
@@ -146,6 +144,14 @@ async def _handle_bot_added(update, context, chat, db):
 
         if pending_count > 0:
             status_parts.append(f'\n\n\U0001f389 Found <b>{pending_count}</b> existing pending join requests!')
+            if telethon_enumerated > 0:
+                status_parts.append(f'\u2705 Imported {telethon_enumerated} requests into database.')
+            elif not telethon or not telethon.available:
+                status_parts.append('\u26a0\ufe0f Telethon not configured - cannot import individual requests.')
+                status_parts.append('Use /scan after configuring Telethon to import them.')
+            else:
+                status_parts.append('\u26a0\ufe0f Could not enumerate individual requests via Telethon.')
+                status_parts.append('Use /scan to retry importing them.')
             status_parts.append('Use /batch to approve or decline them.')
         elif not telethon or not telethon.available:
             status_parts.append('\n\n\u26a0\ufe0f Telethon (MTProto) is not configured.')
