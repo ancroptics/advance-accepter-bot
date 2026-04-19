@@ -149,7 +149,7 @@ class DatabaseModels:
                 status = 'pending', username = COALESCE($3, join_requests.username),
                 first_name = COALESCE($4, join_requests.first_name),
                 user_language = COALESCE($5, join_requests.user_language),
-                request_time = NOW()
+                request_time = CASE WHEN join_requests.status = 'pending' THEN join_requests.request_time ELSE NOW() END
         """, user_id, chat_id, username, first_name, user_language)
 
     async def get_pending_count(self, chat_id):
@@ -172,9 +172,10 @@ class DatabaseModels:
     async def update_join_request_after_approve(self, user_id, chat_id, dm_sent=False, dm_failed_reason=None, dm_message_id=None, processed_by='auto'):
         return await self.db.execute("""
             UPDATE join_requests SET status = 'approved', processed_at = NOW(),
-                dm_attempted = TRUE, dm_sent = $3, dm_failed_reason = $4
+                dm_attempted = TRUE, dm_sent = $3, dm_failed_reason = $4,
+                processed_by = $5, force_sub_completed = TRUE
             WHERE user_id = $1 AND chat_id = $2
-        """, user_id, chat_id, dm_sent, dm_failed_reason)
+        """, user_id, chat_id, dm_sent, dm_failed_reason, processed_by)
 
     async def update_join_request_force_sub(self, user_id, chat_id, required):
         return await self.db.execute("""
@@ -323,6 +324,7 @@ class DatabaseModels:
         return await self.db.fetch("""
             SELECT * FROM join_requests
             WHERE chat_id = $1 AND status = 'pending'
+                AND (force_sub_required IS NULL OR force_sub_completed = TRUE)
             ORDER BY request_time
             LIMIT $2
         """, chat_id, limit)
