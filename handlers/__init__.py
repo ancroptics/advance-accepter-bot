@@ -300,16 +300,21 @@ async def handle_text_input(update, context):
         )
         return
 
-    # Handle support username editing
+    # Handle support username editing (superadmin only - global)
     if context.user_data.get('awaiting_support_username'):
         context.user_data.pop('awaiting_support_username')
-        new_username = update.message.text.strip().replace('@', '')
+        new_username = update.message.text.strip().replace('@', '').lstrip('@')
         config.SUPPORT_USERNAME = new_username
         import os
         os.environ['SUPPORT_USERNAME'] = new_username
+        try:
+            await db.set_platform_setting('support_username', new_username)
+        except Exception as _e:
+            logger.error(f'Failed to persist support_username: {_e}')
         await update.message.reply_text(
-            f'\u2705 Support username updated to @{new_username}',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data='dashboard')]])
+            f'\u2705 Support username updated to @{new_username}\n\n'
+            f'All users will now see this contact when they tap \U0001f4ac Support on the dashboard.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]])
         )
         return
 

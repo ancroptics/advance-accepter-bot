@@ -240,17 +240,12 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     except Exception:
         pending_db = await db.get_pending_count(chat_id)
     pending = pending_db if pending_db is not None else channel.get('pending_requests', 0)
-    support = channel.get('support_username', '')
-
     text = (f'\u2699\ufe0f Channel Settings: {title}\n\n'
             f'Mode: {mode}\n'
             f'Auto-approve: {"ON" if auto else "OFF"}\n'
             f'Welcome DM: {"ON" if welcome_dm else "OFF"}\n'
             f'Force Subscribe: {"ON" if force_sub else "OFF"}\n'
             f'Pending: {pending}\n')
-    if support:
-        text += f'Support: @{support}\n'
-
     buttons = []
     mode_labels = [('instant', 'Instant'), ('manual', 'Manual'), ('drip', 'Drip')]
     mode_btns = []
@@ -290,7 +285,6 @@ async def show_channel_settings(query, db, chat_id, user_id, context=None):
     if wm_row:
         buttons.append(wm_row)
     buttons.append([
-        InlineKeyboardButton('\U0001f4ac Support Username', callback_data=f'edit_support_username:{chat_id}'),
         InlineKeyboardButton('\U0001f4ca Stats', callback_data=f'channel_stats:{chat_id}'),
     ])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='my_channels')])
@@ -412,13 +406,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         elif data == 'edit_support_overview':
-            owner_username = query.from_user.username or 'Not set'
-            support_username = config.SUPPORT_USERNAME or owner_username
-            text = ('\U0001f4ac SUPPORT\n\n'
-                    'For help and queries, contact the owner:\n\n'
-                    f'\U0001f464 @{support_username}\n\n'
-                    'This username is shown to users who need assistance.')
-            buttons = [[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]
+            support_username = ''
+            try:
+                support_username = (await db.get_platform_setting('support_username', '')) or ''
+            except Exception:
+                support_username = ''
+            if not support_username:
+                support_username = getattr(config, 'SUPPORT_USERNAME', '') or ''
+            is_superadmin = user_id in config.SUPERADMIN_IDS
+            if support_username:
+                text = ('\U0001f4ac SUPPORT\n\n'
+                        'Need help? Reach out to our support:\n\n'
+                        f'\U0001f464 @{support_username}\n\n'
+                        'Tap the username above to start a chat.')
+            else:
+                text = ('\U0001f4ac SUPPORT\n\n'
+                        'Support username is not configured yet.\n'
+                        'Please check back later.')
+            buttons = []
+            if is_superadmin:
+                buttons.append([InlineKeyboardButton('\u270f\ufe0f Edit Support Username', callback_data='edit_support_username')])
+            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
@@ -1024,13 +1032,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith('edit_support_username:'):
             chat_id = int(data.split(':')[1])
-            context.user_data['editing_support_username_for'] = chat_id
+            await query.answer('Support is managed globally by the superadmin.', show_alert=True)
             await query.edit_message_text(
-                'Send me the support username (without @).\n'
-                'This will be shown to users who need help.\n\n'
-                'Send /cancel to cancel.',
+                '\U0001f512 Support username is managed globally by the superadmin.\n\n'
+                'Tap the Support button on the main dashboard to view the current support contact.',
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('Cancel', callback_data=f'channel:{chat_id}')]
+                    [InlineKeyboardButton('\U0001f519 Back to Channel', callback_data=f'channel:{chat_id}')]
                 ])
             )
 
