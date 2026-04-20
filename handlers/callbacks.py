@@ -428,56 +428,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_dashboard(update, context, edit=True)
 
         elif data == 'default_welcome_msg':
-            # Advanced welcome message settings - one message, choose channels
+            # PERF: single owner-channels query + one ANY() read for platform_settings.
             channels = await db.get_owner_channels(user_id)
             ch_count = len(channels) if channels else 0
 
-            # Get current default welcome message
             default_msg = None
             default_media_type = None
             default_buttons_json = '[]'
             default_parse_mode = 'HTML'
             try:
-                row = await db.pool.fetchrow(
-                    "SELECT value FROM platform_settings WHERE key = $1",
-                    f'owner_{user_id}_default_welcome'
+                ps_keys = [
+                    f'owner_{user_id}_default_welcome',
+                    f'owner_{user_id}_welcome_media_type',
+                    f'owner_{user_id}_welcome_buttons',
+                    f'owner_{user_id}_welcome_parse_mode',
+                ]
+                ps_rows = await db.pool.fetch(
+                    "SELECT key, value FROM platform_settings WHERE key = ANY($1)",
+                    ps_keys,
                 )
-                if row:
-                    default_msg = row['value']
-                media_row = await db.pool.fetchrow(
-                    "SELECT value FROM platform_settings WHERE key = $1",
-                    f'owner_{user_id}_welcome_media_type'
-                )
-                if media_row:
-                    default_media_type = media_row['value']
-                btns_row = await db.pool.fetchrow(
-                    "SELECT value FROM platform_settings WHERE key = $1",
-                    f'owner_{user_id}_welcome_buttons'
-                )
-                if btns_row:
-                    default_buttons_json = btns_row['value']
-                pm_row = await db.pool.fetchrow(
-                    "SELECT value FROM platform_settings WHERE key = $1",
-                    f'owner_{user_id}_welcome_parse_mode'
-                )
-                if pm_row:
-                    default_parse_mode = pm_row['value']
+                ps_map = {r['key']: r['value'] for r in (ps_rows or [])}
+                default_msg = ps_map.get(ps_keys[0])
+                default_media_type = ps_map.get(ps_keys[1])
+                default_buttons_json = ps_map.get(ps_keys[2]) or '[]'
+                default_parse_mode = ps_map.get(ps_keys[3]) or 'HTML'
             except Exception:
                 pass
 
-            if not default_msg:
-                if channels:
-                    ch = await db.get_channel(channels[0]['chat_id'])
-                    default_msg = ch.get('welcome_message', '') if ch else ''
+            if not default_msg and channels:
+                default_msg = channels[0].get('welcome_message', '') or ''
 
             current = default_msg or 'Welcome to {channel_name}! \U0001f389'
 
-            enabled_count = 0
-            for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
-                if full_ch and full_ch.get('welcome_dm_enabled'):
-                    enabled_count += 1
-
+            enabled_count = sum(1 for ch in (channels or []) if ch.get('welcome_dm_enabled'))
             all_enabled = enabled_count == ch_count and ch_count > 0
             status = '\U0001f7e2 Enabled' if all_enabled else ('\U0001f7e1 Partial' if enabled_count > 0 else '\U0001f534 Disabled')
 
@@ -519,8 +502,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buttons.append([InlineKeyboardButton(toggle_all_text, callback_data='toggle_all_welcome')])
 
             for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
-                dm_on = full_ch.get('welcome_dm_enabled', False) if full_ch else False
+                dm_on = bool(ch.get('welcome_dm_enabled'))
                 icon = '\u2705' if dm_on else '\u274c'
                 title = ch.get('chat_title', 'Unknown')[:25]
                 buttons.append([
@@ -559,57 +541,98 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         elif data == 'toggle_all_welcome':
+            # PERF: bulk UPDATE + single platform_settings read (no per-channel queries).
             channels = await db.get_owner_channels(user_id)
-            enabled_count = 0
-            for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
-                if full_ch and full_ch.get('welcome_dm_enabled'):
-                    enabled_count += 1
-            all_enabled = enabled_count == len(channels) and len(channels) > 0
-            new_state = not all_enabled
-            for ch in (channels or []):
-                await db.update_channel_setting(ch['chat_id'], 'welcome_dm_enabled', new_state)
+            if not channels:
+                await query.answer('No channels connected.')
+                await _show_default_welcome_msg(update, context)
+            else:
+                enabled_count = sum(1 for ch in channels if ch.get('welcome_dm_enabled'))
+                all_enabled = enabled_count == len(channels)
+                new_state = not all_enabled
+                default_msg_val = None
+                default_btns_val = None
                 if new_state:
                     try:
-                        row = await db.pool.fetchrow(
-                            "SELECT value FROM platform_settings WHERE key = $1",
-                            f'owner_{user_id}_default_welcome'
+                        rows = await db.pool.fetch(
+                            "SELECT key, value FROM platform_settings WHERE key = ANY($1)",
+                            [f'owner_{user_id}_default_welcome', f'owner_{user_id}_welcome_buttons'],
                         )
-                        if row and row['value']:
-                            await db.update_channel_setting(ch['chat_id'], 'welcome_message', row['value'])
-                        btns_row = await db.pool.fetchrow(
-                            "SELECT value FROM platform_settings WHERE key = $1",
-                            f'owner_{user_id}_welcome_buttons'
-                        )
-                        if btns_row:
-                            await db.update_channel_setting(ch['chat_id'], 'welcome_buttons_json', btns_row['value'])
+                        for r in (rows or []):
+                            if r['key'].endswith('_default_welcome'):
+                                default_msg_val = r['value']
+                            elif r['key'].endswith('_welcome_buttons'):
+                                default_btns_val = r['value']
                     except Exception:
                         pass
-            await query.answer(f'Welcome DM {"enabled" if new_state else "disabled"} for all channels!')
-            await _show_default_welcome_msg(update, context)
+                chat_ids = [ch['chat_id'] for ch in channels]
+                try:
+                    if new_state and default_msg_val and default_btns_val is not None:
+                        await db.pool.execute(
+                            "UPDATE managed_channels SET welcome_dm_enabled=$1, welcome_message=$2, welcome_buttons_json=$3 WHERE chat_id = ANY($4)",
+                            new_state, default_msg_val, default_btns_val, chat_ids,
+                        )
+                    elif new_state and default_msg_val:
+                        await db.pool.execute(
+                            "UPDATE managed_channels SET welcome_dm_enabled=$1, welcome_message=$2 WHERE chat_id = ANY($3)",
+                            new_state, default_msg_val, chat_ids,
+                        )
+                    elif new_state and default_btns_val is not None:
+                        await db.pool.execute(
+                            "UPDATE managed_channels SET welcome_dm_enabled=$1, welcome_buttons_json=$2 WHERE chat_id = ANY($3)",
+                            new_state, default_btns_val, chat_ids,
+                        )
+                    else:
+                        await db.pool.execute(
+                            "UPDATE managed_channels SET welcome_dm_enabled=$1 WHERE chat_id = ANY($2)",
+                            new_state, chat_ids,
+                        )
+                except Exception as _e:
+                    logger.error(f'toggle_all_welcome bulk update failed: {_e}')
+                await query.answer(f'Welcome DM {"enabled" if new_state else "disabled"} for all channels!')
+                await _show_default_welcome_msg(update, context)
 
         elif data.startswith('toggle_welcome_channel:'):
             chat_id = int(data.split(':')[1])
+            # PERF: single ANY() read for platform_settings + single UPDATE.
             channel = await db.get_channel(chat_id)
             current = channel.get('welcome_dm_enabled', False) if channel else False
             new_state = not current
-            await db.update_channel_setting(chat_id, 'welcome_dm_enabled', new_state)
+            default_msg_val = None
+            default_btns_val = None
             if new_state:
                 try:
-                    row = await db.pool.fetchrow(
-                        "SELECT value FROM platform_settings WHERE key = $1",
-                        f'owner_{user_id}_default_welcome'
+                    rows = await db.pool.fetch(
+                        "SELECT key, value FROM platform_settings WHERE key = ANY($1)",
+                        [f'owner_{user_id}_default_welcome', f'owner_{user_id}_welcome_buttons'],
                     )
-                    if row and row['value']:
-                        await db.update_channel_setting(chat_id, 'welcome_message', row['value'])
-                    btns_row = await db.pool.fetchrow(
-                        "SELECT value FROM platform_settings WHERE key = $1",
-                        f'owner_{user_id}_welcome_buttons'
-                    )
-                    if btns_row:
-                        await db.update_channel_setting(chat_id, 'welcome_buttons_json', btns_row['value'])
+                    for r in (rows or []):
+                        if r['key'].endswith('_default_welcome'):
+                            default_msg_val = r['value']
+                        elif r['key'].endswith('_welcome_buttons'):
+                            default_btns_val = r['value']
                 except Exception:
                     pass
+            try:
+                if new_state and default_msg_val and default_btns_val is not None:
+                    await db.pool.execute(
+                        "UPDATE managed_channels SET welcome_dm_enabled=$1, welcome_message=$2, welcome_buttons_json=$3 WHERE chat_id=$4",
+                        new_state, default_msg_val, default_btns_val, chat_id,
+                    )
+                elif new_state and default_msg_val:
+                    await db.pool.execute(
+                        "UPDATE managed_channels SET welcome_dm_enabled=$1, welcome_message=$2 WHERE chat_id=$3",
+                        new_state, default_msg_val, chat_id,
+                    )
+                elif new_state and default_btns_val is not None:
+                    await db.pool.execute(
+                        "UPDATE managed_channels SET welcome_dm_enabled=$1, welcome_buttons_json=$2 WHERE chat_id=$3",
+                        new_state, default_btns_val, chat_id,
+                    )
+                else:
+                    await db.update_channel_setting(chat_id, 'welcome_dm_enabled', new_state)
+            except Exception as _e:
+                logger.error(f'toggle_welcome_channel update failed: {_e}')
             await query.answer(f'Welcome DM {"enabled" if new_state else "disabled"}!')
             await _show_default_welcome_msg(update, context)
 
@@ -701,11 +724,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "ON CONFLICT (key) DO UPDATE SET value = $2",
                     f'owner_{user_id}_welcome_buttons', json.dumps(welcome_btns)
                 )
+                # PERF: bulk UPDATE all enabled channels in one statement.
                 channels = await db.get_owner_channels(user_id)
-                for ch in (channels or []):
-                    full_ch = await db.get_channel(ch['chat_id'])
-                    if full_ch and full_ch.get('welcome_dm_enabled'):
-                        await db.update_channel_setting(ch['chat_id'], 'welcome_buttons_json', json.dumps(welcome_btns))
+                enabled_ids = [ch['chat_id'] for ch in (channels or []) if ch.get('welcome_dm_enabled')]
+                if enabled_ids:
+                    try:
+                        await db.pool.execute(
+                            "UPDATE managed_channels SET welcome_buttons_json=$1 WHERE chat_id = ANY($2)",
+                            json.dumps(welcome_btns), enabled_ids,
+                        )
+                    except Exception as _e:
+                        logger.error(f'remove_default_welcome_btn bulk update failed: {_e}')
                 await query.answer(f"Removed {removed.get('text', 'channel')}", show_alert=True)
             await _show_default_welcome_msg(update, context)
 
