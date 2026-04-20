@@ -85,6 +85,25 @@ class Bot:
             await self.app.initialize()
             await self.app.start()
 
+            try:
+                from telegram import BotCommand
+                commands = [
+                    BotCommand('start', 'Open the dashboard'),
+                    BotCommand('dashboard', 'Show your dashboard'),
+                    BotCommand('channels', 'Manage your channels'),
+                    BotCommand('help', 'Show help & features'),
+                    BotCommand('scan', 'Scan channels for pending join requests'),
+                    BotCommand('batch', 'Batch approve pending join requests'),
+                    BotCommand('superadmin', 'Superadmin panel (admins only)'),
+                    BotCommand('activate_premium', 'Activate premium (admins only)'),
+                    BotCommand('deactivate_premium', 'Deactivate premium (admins only)'),
+                ]
+                await self.app.bot.set_my_commands(commands)
+                logger.info(f'Registered {len(commands)} bot commands in menu')
+            except Exception as _e:
+                logger.error(f'set_my_commands failed: {_e}')
+
+
             await self.app.updater.start_polling(
                 allowed_updates=[
                     "message", "edited_message", "callback_query",
