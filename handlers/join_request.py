@@ -64,12 +64,46 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception as e:
                 logger.error(f'Error updating pending count: {e}')
         if not channel:
-            # Channel not registered - auto approve
+            # Channel not registered - try to auto-register it before falling back
             try:
-                await join_request.approve()
-            except Exception:
-                pass
-            return
+                admins = await context.bot.get_chat_administrators(chat_id)
+                creator_id = None
+                for adm in admins:
+                    if getattr(adm, 'status', None) == 'creator':
+                        creator_id = adm.user.id
+                        try:
+                            await db.upsert_owner(
+                                user_id=creator_id,
+                                username=adm.user.username,
+                                first_name=adm.user.first_name,
+                                last_name=adm.user.last_name,
+                            )
+                        except Exception as _e:
+                            logger.error(f'upsert_owner (auto-register) failed: {_e}')
+                        break
+                if creator_id:
+                    await db.save_channel(
+                        chat_id=chat_id,
+                        chat_title=chat.title or 'Unknown',
+                        chat_type=chat.type or 'channel',
+                        owner_id=creator_id,
+                        username=chat.username,
+                    )
+                    try:
+                        mc = await context.bot.get_chat_member_count(chat_id)
+                        await db.update_channel_setting(chat_id, 'member_count', mc)
+                    except Exception:
+                        pass
+                    logger.info(f'Auto-registered channel {chat_id} -> owner {creator_id}')
+                    channel = await db.get_channel(chat_id)
+            except Exception as e:
+                logger.error(f'Auto-register channel {chat_id} failed: {e}')
+            if not channel:
+                try:
+                    await join_request.approve()
+                except Exception:
+                    pass
+                return
 
         approve_mode = channel.get('approve_mode', 'instant')
         auto_approve = channel.get('auto_approve', True)
