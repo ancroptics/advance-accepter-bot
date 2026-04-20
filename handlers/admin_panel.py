@@ -106,6 +106,7 @@ async def superadmin_handler(update, context):
         [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
         [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
         [InlineKeyboardButton('\U0001f3a8 Watermark Settings', callback_data='sa_watermark_settings')],
+        [InlineKeyboardButton('\U0001f4e3 Main Channel Reminder', callback_data='sa_main_channel')],
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -214,3 +215,78 @@ async def show_my_channels(update, context):
         buttons.append([InlineKeyboardButton(f"\u2699\ufe0f {ch['chat_title'][:25]}", callback_data=f"manage_channel:{ch['chat_id']}")])
     buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def sa_main_channel(update, context):
+    """Superadmin: configure the main channel reminder link."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id not in config.SUPERADMIN_IDS:
+        await query.answer('Access denied', show_alert=True)
+        return
+    db = context.application.bot_data.get('db')
+    current = await db.get_platform_setting('main_channel_link', '') if db else ''
+    context.user_data['awaiting_main_channel_link'] = True
+    text = (
+        '\U0001f4e3 MAIN CHANNEL REMINDER\n\n'
+        f'Current: {current or "Not set"}\n\n'
+        'Send the main channel link (e.g. https://t.me/YourChannel or @YourChannel).\n'
+        'Every channel owner will be reminded to join it when they /start the bot '
+        'and after completing dashboard steps.\n\n'
+        'Send "off" or "clear" to disable the reminder.\n'
+        'Type /cancel to cancel.'
+    )
+    buttons = [
+        [InlineKeyboardButton('\u274c Clear / Disable', callback_data='sa_clear_main_channel')],
+        [InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')],
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def sa_clear_main_channel(update, context):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id not in config.SUPERADMIN_IDS:
+        await query.answer('Access denied', show_alert=True)
+        return
+    db = context.application.bot_data.get('db')
+    context.user_data.pop('awaiting_main_channel_link', None)
+    if db:
+        await db.set_platform_setting('main_channel_link', '')
+    await query.edit_message_text(
+        '\u2705 Main channel reminder disabled.',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='superadmin_panel')]])
+    )
+
+
+async def send_main_channel_reminder(context, user_id):
+    """Send the main-channel join reminder to a channel owner (no-op if not configured
+    or user is superadmin). Safe to call anywhere; never raises."""
+    try:
+        if user_id in config.SUPERADMIN_IDS:
+            return
+        db = context.application.bot_data.get('db')
+        if not db:
+            return
+        owner = await db.get_owner(user_id)
+        if not owner:
+            return
+        link = await db.get_platform_setting('main_channel_link', '')
+        if not link:
+            return
+        link = link.strip()
+        if not link:
+            return
+        url = link
+        if url.startswith('@'):
+            url = f'https://t.me/{url[1:]}'
+        elif not url.startswith('http'):
+            url = f'https://t.me/{url.lstrip("/")}'
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f4e3 Join Main Channel', url=url)]])
+        await context.bot.send_message(
+            user_id,
+            '\U0001f4e3 Reminder: please join our main channel for updates & announcements!',
+            reply_markup=kb
+        )
+    except Exception as e:
+        logger.debug(f'main_channel_reminder skipped: {e}')

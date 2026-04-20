@@ -237,6 +237,46 @@ async def handle_text_input(update, context):
             await update.message.reply_text(f'\u274c Error: {e}')
         return
 
+    # Handle main channel reminder link (superadmin)
+    if context.user_data.get('awaiting_main_channel_link'):
+        if user_id not in config.SUPERADMIN_IDS:
+            context.user_data.pop('awaiting_main_channel_link', None)
+            return
+        context.user_data.pop('awaiting_main_channel_link')
+        raw = (update.message.text or '').strip()
+        if raw.lower() in ('off', 'clear', 'disable', 'none', '-'):
+            try:
+                await db.set_platform_setting('main_channel_link', '')
+            except Exception as e:
+                logger.error(f'clear main_channel_link failed: {e}')
+            await update.message.reply_text(
+                '\u2705 Main channel reminder disabled.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Superadmin Panel', callback_data='superadmin_panel')]])
+            )
+            return
+        link = raw
+        preview_url = link
+        if preview_url.startswith('@'):
+            preview_url = f'https://t.me/{preview_url[1:]}'
+        elif not preview_url.startswith('http'):
+            preview_url = f'https://t.me/{preview_url.lstrip("/")}'
+        try:
+            await db.set_platform_setting('main_channel_link', link)
+        except Exception as e:
+            logger.error(f'save main_channel_link failed: {e}')
+            await update.message.reply_text(f'\u274c Error saving link: {e}')
+            return
+        await update.message.reply_text(
+            f'\u2705 Main channel reminder set!\n\nLink: {preview_url}\n\n'
+            'All channel owners will now be reminded to join this channel on /start '
+            'and after completing dashboard steps.',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('\U0001f4e3 Test Preview', url=preview_url)],
+                [InlineKeyboardButton('\U0001f519 Superadmin Panel', callback_data='superadmin_panel')]
+            ])
+        )
+        return
+
     # Handle support username editing
     if context.user_data.get('awaiting_support_username'):
         context.user_data.pop('awaiting_support_username')
@@ -307,6 +347,20 @@ async def handle_text_input(update, context):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Back', callback_data=f'manage_channel:{chat_id}')]])
         )
         return
+
+
+# --- Main channel reminder hook (wraps handle_text_input so owners get reminded after each step) ---
+_original_handle_text_input = handle_text_input
+
+async def handle_text_input(update, context):  # type: ignore[no-redef]
+    result = await _original_handle_text_input(update, context)
+    try:
+        if update.effective_user and update.effective_user.id not in config.SUPERADMIN_IDS:
+            from handlers.admin_panel import send_main_channel_reminder
+            await send_main_channel_reminder(context, update.effective_user.id)
+    except Exception as e:
+        logger.debug(f'reminder after text step skipped: {e}')
+    return result
 
 # Alias for bot.py import
 register_all_handlers = register_handlers

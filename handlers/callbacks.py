@@ -405,6 +405,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton('\U0001f4ac Edit Support Username', callback_data='edit_support_username')],
                 [InlineKeyboardButton('\U0001f4b3 Edit UPI ID', callback_data='sa_edit_upi')],
                 [InlineKeyboardButton('\u2699\ufe0f Feature Toggles', callback_data='sa_feature_toggles')],
+                [InlineKeyboardButton('\U0001f4e3 Main Channel Reminder', callback_data='sa_main_channel')],
                 [InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')],
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1535,6 +1536,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 '\u270f\ufe0f Send the username for the global watermark (without @):',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\u274c Cancel', callback_data='default_watermark')]])
             )
+
+        elif data == 'sa_main_channel':
+            from handlers.admin_panel import sa_main_channel
+            await sa_main_channel(update, context)
+
+        elif data == 'sa_clear_main_channel':
+            from handlers.admin_panel import sa_clear_main_channel
+            await sa_clear_main_channel(update, context)
 
         elif data == 'sa_edit_upi':
             context.user_data['awaiting_upi_input'] = True

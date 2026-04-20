@@ -91,8 +91,12 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_superadmin = user_id in config.SUPERADMIN_IDS
 
         # Always show dashboard for all users
-        from handlers.admin_panel import show_dashboard
+        from handlers.admin_panel import show_dashboard, send_main_channel_reminder
         await show_dashboard(update, context, edit=False)
+        try:
+            await send_main_channel_reminder(context, user_id)
+        except Exception as _e:
+            pass
 
     except Exception as e:
         logger.exception(f'Error in start_handler: {e}')
