@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CommandHandler, filters, CallbackQueryHandler
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ async def cancel_broadcast(update, context):
 broadcast_conv_handler = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_broadcast, pattern='^broadcast$'),
-        MessageHandler(filters.Regex('^/broadcast$'), start_broadcast),
+        CommandHandler('broadcast', start_broadcast),
     ],
     states={
         WAITING_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, receive_content)],

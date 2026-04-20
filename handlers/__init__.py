@@ -30,8 +30,9 @@ def register_handlers(application):
     """Register all bot handlers."""
     from handlers.admin_panel import dashboard_handler, channels_handler, superadmin_handler
     from handlers.start import start_handler
-    from handlers.user_commands import help_handler
+    from handlers.user_commands import help_handler, referral_handler, leaderboard_handler, balance_handler, mystats_handler
     from handlers.premium import activate_premium_handler, deactivate_premium_handler
+    from handlers.broadcast import broadcast_conv_handler
 
     # 1. Command handlers
     application.add_handler(CommandHandler('start', start_handler))
@@ -43,6 +44,11 @@ def register_handlers(application):
     application.add_handler(CommandHandler('deactivate_premium', deactivate_premium_handler))
     application.add_handler(CommandHandler('scan', scan_command))
     application.add_handler(CommandHandler('batch', batch_approve_command))
+    application.add_handler(CommandHandler('referral', referral_handler))
+    application.add_handler(CommandHandler('leaderboard', leaderboard_handler))
+    application.add_handler(CommandHandler('balance', balance_handler))
+    application.add_handler(CommandHandler('mystats', mystats_handler))
+    application.add_handler(broadcast_conv_handler)
 
     # 2. Chat member handler (bot added/removed from channels)
     application.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
