@@ -188,7 +188,6 @@ async def handle_welcome_channel_input(update, context):
             )
             return WELCOME_CH_INPUT
 
-        # Get current welcome buttons
         channel = await db.get_channel(chat_id)
         current_btns_raw = channel.get('welcome_buttons_json') or '[]'
         if isinstance(current_btns_raw, str):
@@ -201,7 +200,6 @@ async def handle_welcome_channel_input(update, context):
         else:
             current_btns = []
 
-        # Check duplicate
         for btn in current_btns:
             if btn.get('chat_id') == chat_info.id:
                 await update.message.reply_text(
@@ -210,13 +208,11 @@ async def handle_welcome_channel_input(update, context):
                 )
                 return ConversationHandler.END
 
-        # Build URL
         if chat_info.username:
             url = f'https://t.me/{chat_info.username}'
         elif hasattr(chat_info, 'invite_link') and chat_info.invite_link:
             url = chat_info.invite_link
         else:
-            # Try to create invite link
             try:
                 url = (await context.bot.create_chat_invite_link(chat_info.id)).invite_link
             except Exception:
@@ -311,7 +307,6 @@ async def handle_default_welcome_btn_input(update, context):
             )
             return DEFAULT_WELCOME_BTN_INPUT
 
-        # Get current default welcome buttons
         try:
             btns_row = await db.pool.fetchrow(
                 "SELECT value FROM platform_settings WHERE key = $1",
@@ -321,7 +316,6 @@ async def handle_default_welcome_btn_input(update, context):
         except Exception:
             current_btns = []
 
-        # Check duplicate
         for btn in current_btns:
             if btn.get('chat_id') == chat_info.id:
                 await update.message.reply_text(
@@ -330,7 +324,6 @@ async def handle_default_welcome_btn_input(update, context):
                 )
                 return ConversationHandler.END
 
-        # Build URL
         if chat_info.username:
             url = f'https://t.me/{chat_info.username}'
         elif hasattr(chat_info, 'invite_link') and chat_info.invite_link:
@@ -349,19 +342,23 @@ async def handle_default_welcome_btn_input(update, context):
         }
         current_btns.append(new_entry)
 
-        # Save to platform_settings
         await db.pool.execute(
             "INSERT INTO platform_settings (key, value) VALUES ($1, $2) "
             "ON CONFLICT (key) DO UPDATE SET value = $2",
             f'owner_{user_id}_welcome_buttons', _json.dumps(current_btns)
         )
 
-        # Sync to all enabled channels
+        # PERF: single bulk UPDATE across all enabled channels.
         channels = await db.get_owner_channels(user_id)
-        for ch in (channels or []):
-            full_ch = await db.get_channel(ch['chat_id'])
-            if full_ch and full_ch.get('welcome_dm_enabled'):
-                await db.update_channel_setting(ch['chat_id'], 'welcome_buttons_json', _json.dumps(current_btns))
+        enabled_ids = [ch['chat_id'] for ch in (channels or []) if ch.get('welcome_dm_enabled')]
+        if enabled_ids:
+            try:
+                await db.pool.execute(
+                    "UPDATE managed_channels SET welcome_buttons_json=$1 WHERE chat_id = ANY($2)",
+                    _json.dumps(current_btns), enabled_ids,
+                )
+            except Exception as _e:
+                logger.error(f'welcome button sync failed: {_e}')
 
         context.user_data.pop('adding_default_welcome_btn', None)
         context.user_data.pop('default_welcome_btn_owner', None)
