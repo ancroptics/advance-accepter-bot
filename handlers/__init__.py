@@ -247,6 +247,7 @@ async def handle_text_input(update, context):
         if raw.lower() in ('off', 'clear', 'disable', 'none', '-'):
             try:
                 await db.set_platform_setting('main_channel_link', '')
+                await db.set_platform_setting('main_channel_chat_id', '')
             except Exception as e:
                 logger.error(f'clear main_channel_link failed: {e}')
             await update.message.reply_text(
@@ -262,10 +263,26 @@ async def handle_text_input(update, context):
             preview_url = f'https://t.me/{preview_url.lstrip("/")}'
         try:
             await db.set_platform_setting('main_channel_link', link)
+            await db.set_platform_setting('main_channel_chat_id', '')
         except Exception as e:
             logger.error(f'save main_channel_link failed: {e}')
             await update.message.reply_text(f'\u274c Error saving link: {e}')
             return
+        try:
+            from handlers.admin_panel import _resolve_main_channel_chat_id
+            resolved = await _resolve_main_channel_chat_id(context, link)
+            if resolved is not None:
+                await db.set_platform_setting('main_channel_chat_id', str(resolved))
+                await update.message.reply_text(
+                    f'\u2705 Bot can see the channel (chat_id={resolved}). Membership auto-detection is active.'
+                )
+            else:
+                await update.message.reply_text(
+                    '\u26a0\ufe0f Bot could not resolve the channel. Add the bot as an admin in your main channel so it can detect members. '
+                    'For public channels use @username; for private channels make sure the bot is already an admin there.'
+                )
+        except Exception as e:
+            logger.warning(f'resolve main channel after set failed: {e}')
         await update.message.reply_text(
             f'\u2705 Main channel reminder set!\n\nLink: {preview_url}\n\n'
             'All channel owners will now be reminded to join this channel on /start '
