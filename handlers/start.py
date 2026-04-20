@@ -40,6 +40,17 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except ValueError:
                     pass
 
+        # Upsert owner so dashboard is accessible for this user
+        try:
+            await db.upsert_owner(
+                user_id=user_id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+            )
+        except Exception as e:
+            logger.error(f'upsert_owner failed: {e}')
+
         # Upsert end user
         await db.upsert_end_user(
             user_id=user_id,
