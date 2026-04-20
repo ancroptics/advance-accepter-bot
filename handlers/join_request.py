@@ -377,3 +377,89 @@ async def _approve_and_dm(join_request, user, chat, channel, db, context):
         )
     except Exception as e:
         logger.error(f'Error logging analytics: {e}')
+
+
+
+async def _send_welcome_dm_simple(application, db, channel, user_id, req_row=None):
+    """Send welcome DM in scheduler contexts (no Update/User object available).
+    Reuses the channel's welcome_message and welcome_buttons_json.
+    Returns (dm_sent: bool, dm_message_id: Optional[int]).
+    """
+    if not channel or not channel.get('welcome_dm_enabled', True):
+        return False, None
+    bot = application.bot
+    chat_id = channel.get('chat_id')
+    try:
+        first_name = (req_row or {}).get('first_name') or 'there'
+        username = (req_row or {}).get('username')
+    except Exception:
+        first_name, username = 'there', None
+    welcome_text = channel.get('welcome_message') or 'Welcome to {channel_name}! \U0001f389'
+    try:
+        welcome_text = welcome_text.replace('{first_name}', first_name or 'there')
+        welcome_text = welcome_text.replace('{last_name}', '')
+        welcome_text = welcome_text.replace('{username}', f'@{username}' if username else 'there')
+        welcome_text = welcome_text.replace('{user_id}', str(user_id))
+        welcome_text = welcome_text.replace('{channel_name}', channel.get('chat_title') or '')
+        welcome_text = welcome_text.replace('{channel_username}', f"@{channel.get('chat_username')}" if channel.get('chat_username') else '')
+        welcome_text = welcome_text.replace('{member_count}', str(channel.get('member_count', 0)))
+        try:
+            welcome_text = welcome_text.replace('{referral_link}', f'https://t.me/{config.BOT_USERNAME}?start=ref_{user_id}')
+        except Exception:
+            pass
+        welcome_text = welcome_text.replace('{date}', datetime.now().strftime('%Y-%m-%d'))
+        welcome_text = welcome_text.replace('{coins}', '0')
+    except Exception:
+        pass
+
+    reply_markup = None
+    btns_data = channel.get('welcome_buttons_json')
+    if isinstance(btns_data, str):
+        try:
+            import json as _json_b
+            btns_data = _json_b.loads(btns_data)
+        except Exception:
+            btns_data = None
+    if not btns_data and channel.get('owner_id'):
+        try:
+            import json as _json_b2
+            raw = await db.get_platform_setting(f'owner_{channel["owner_id"]}_welcome_buttons', '[]')
+            btns_data = _json_b2.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            btns_data = None
+    if btns_data:
+        try:
+            rows = [[InlineKeyboardButton(b.get('text', 'Link'), url=b.get('url', 'https://t.me'))] for b in btns_data]
+            reply_markup = InlineKeyboardMarkup(rows)
+        except Exception:
+            reply_markup = None
+
+    media_type = channel.get('welcome_media_type')
+    media_fid = channel.get('welcome_media_file_id')
+    sent = None
+    async def _send(pm):
+        nonlocal sent
+        if media_type == 'photo' and media_fid:
+            sent = await bot.send_photo(user_id, media_fid, caption=welcome_text, parse_mode=pm, reply_markup=reply_markup)
+        elif media_type == 'video' and media_fid:
+            sent = await bot.send_video(user_id, media_fid, caption=welcome_text, parse_mode=pm, reply_markup=reply_markup)
+        elif media_type == 'animation' and media_fid:
+            sent = await bot.send_animation(user_id, media_fid, caption=welcome_text, parse_mode=pm, reply_markup=reply_markup)
+        elif media_type == 'document' and media_fid:
+            sent = await bot.send_document(user_id, media_fid, caption=welcome_text, parse_mode=pm, reply_markup=reply_markup)
+        else:
+            sent = await bot.send_message(user_id, welcome_text, parse_mode=pm, reply_markup=reply_markup)
+    try:
+        await _send('HTML')
+    except Exception as e1:
+        err = str(e1).lower()
+        if "can't parse" in err or 'parse entities' in err or 'bad request' in err:
+            try:
+                await _send(None)
+            except Exception as e2:
+                logger.debug(f'Timeout welcome DM failed (plain) for {user_id} in {chat_id}: {e2}')
+                return False, None
+        else:
+            logger.debug(f'Timeout welcome DM failed for {user_id} in {chat_id}: {e1}')
+            return False, None
+    return True, (sent.message_id if sent else None)
