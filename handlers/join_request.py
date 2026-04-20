@@ -381,10 +381,6 @@ async def _approve_and_dm(join_request, user, chat, channel, db, context):
 
 
 async def _send_welcome_dm_simple(application, db, channel, user_id, req_row=None):
-    """Send welcome DM in scheduler contexts (no Update/User object available).
-    Reuses the channel's welcome_message and welcome_buttons_json.
-    Returns (dm_sent: bool, dm_message_id: Optional[int]).
-    """
     if not channel or not channel.get('welcome_dm_enabled', True):
         return False, None
     bot = application.bot
@@ -394,7 +390,7 @@ async def _send_welcome_dm_simple(application, db, channel, user_id, req_row=Non
         username = (req_row or {}).get('username')
     except Exception:
         first_name, username = 'there', None
-    welcome_text = channel.get('welcome_message') or 'Welcome to {channel_name}! \U0001f389'
+    welcome_text = channel.get('welcome_message') or 'Welcome to {channel_name}!'
     try:
         welcome_text = welcome_text.replace('{first_name}', first_name or 'there')
         welcome_text = welcome_text.replace('{last_name}', '')
