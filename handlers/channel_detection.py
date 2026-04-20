@@ -6,14 +6,8 @@ import config
 
 logger = logging.getLogger(__name__)
 
-
 async def get_telegram_pending_count(bot_token, chat_id):
-    """Get pending_join_request_count via raw Telegram Bot API.
-
-    python-telegram-bot v21.x does NOT map this field to Chat/ChatFullInfo,
-    so getattr(chat_info, 'pending_join_request_count', 0) always returns 0.
-    We must call the raw HTTP API and read the JSON directly.
-    """
+    """Get pending_join_request_count via raw Telegram Bot API."""
     import aiohttp
     url = f'https://api.telegram.org/bot{bot_token}/getChat'
     try:
@@ -32,9 +26,7 @@ async def get_telegram_pending_count(bot_token, chat_id):
         logger.error(f'Error getting telegram pending count for {chat_id}: {e}')
         return 0
 
-
 async def channel_detection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle bot being added/removed from channels."""
     my_member = update.my_chat_member
     if not my_member:
         return
@@ -42,31 +34,25 @@ async def channel_detection_handler(update: Update, context: ContextTypes.DEFAUL
     chat = my_member.chat
     old_status = my_member.old_chat_member.status if my_member.old_chat_member else 'left'
     new_status = my_member.new_chat_member.status if my_member.new_chat_member else 'left'
+    logger.info(f'my_chat_member: chat={chat.id} ({chat.title}) type={chat.type} {old_status} -> {new_status}')
 
     db = context.application.bot_data.get('db')
     if not db:
         logger.error('Database not available in channel_detection_handler')
         return
 
-    # Bot was added as admin to a channel
     if new_status in ('administrator', 'creator') and old_status not in ('administrator', 'creator'):
         await _handle_bot_added(update, context, chat, db)
-    # Bot was removed from a channel
     elif new_status in ('left', 'kicked') and old_status in ('administrator', 'creator', 'member'):
         await _handle_bot_removed(update, context, chat, db)
-    # Bot's permissions were updated
     elif new_status == 'administrator' and old_status == 'administrator':
         await _handle_permissions_updated(update, context, chat, db)
 
 async def _handle_bot_added(update, context, chat, db):
-    """Handle bot being added as admin to a channel."""
     user = update.my_chat_member.from_user
     logger.info(f'Bot added to channel: {chat.title} ({chat.id}) by user {user.id}')
 
     try:
-        bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
-        can_invite = getattr(bot_member, 'can_invite_users', False)
-
         await db.save_channel(
             chat_id=chat.id,
             chat_title=chat.title or 'Unknown',
@@ -74,6 +60,26 @@ async def _handle_bot_added(update, context, chat, db):
             owner_id=user.id,
             username=chat.username
         )
+        logger.info(f'Channel {chat.id} saved to DB for owner {user.id}')
+    except Exception as e:
+        logger.exception(f'CRITICAL: failed to save channel {chat.id}: {e}')
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=f'\u26a0\ufe0f Bot added to <b>{chat.title}</b> but database save failed. Please re-add the bot or contact support.',
+                parse_mode='HTML'
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        can_invite = False
+        try:
+            bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+            can_invite = getattr(bot_member, 'can_invite_users', False)
+        except Exception as e:
+            logger.warning(f'Could not read bot member info for {chat.id}: {e}')
 
         member_count = 0
         try:
@@ -82,21 +88,16 @@ async def _handle_bot_added(update, context, chat, db):
         except Exception as e:
             logger.warning(f'Could not get member count: {e}')
 
-        # STEP 1: Always get the real pending count via raw Bot API (fast, reliable)
-        # This is the ground truth - never rely solely on Telethon for the count
         pending_count = await get_telegram_pending_count(context.bot.token, chat.id)
         logger.info(f'Raw API pending count for {chat.title}: {pending_count}')
 
-        # STEP 2: Try Telethon enumeration to import individual requests into DB
         telethon_enumerated = 0
         telethon = context.application.bot_data.get('telethon')
         if telethon and telethon.available and pending_count > 0:
             try:
-                logger.info(f'Fetching {pending_count} pending requests for {chat.id} via Telethon...')
                 requests = await telethon.get_pending_join_requests(chat.id, limit=pending_count + 1000)
                 if requests:
                     telethon_enumerated = len(requests)
-                    logger.info(f'Telethon fetched {telethon_enumerated} pending join requests for {chat.title}')
                     saved = 0
                     for req in requests:
                         try:
@@ -120,23 +121,16 @@ async def _handle_bot_added(update, context, chat, db):
                         except Exception:
                             pass
                     logger.info(f'Saved {saved} pending requests for {chat.title}')
-                else:
-                    logger.warning(f'Telethon returned empty for {chat.title} despite API showing {pending_count} pending')
             except Exception as e:
                 logger.warning(f'Telethon fetch failed for {chat.id}: {e}')
-        elif not telethon or not telethon.available:
-            logger.info(f'Telethon not available - using raw API count only ({pending_count})')
 
-        # Use the larger of raw API count vs Telethon enumerated count
         pending_count = max(pending_count, telethon_enumerated)
         await db.update_channel_setting(chat.id, 'pending_requests', pending_count)
 
-        # Build notification message
         status_parts = []
         status_parts.append(f'\u2705 Bot added to <b>{chat.title}</b>')
         status_parts.append(f'\n\U0001f4ca Members: {member_count}')
         status_parts.append(f'\u23f3 Pending requests: <b>{pending_count}</b>')
-
         if can_invite:
             status_parts.append('\n\u2705 Permission: Can manage join requests')
         else:
@@ -153,10 +147,6 @@ async def _handle_bot_added(update, context, chat, db):
                 status_parts.append('\u26a0\ufe0f Could not enumerate individual requests via Telethon.')
                 status_parts.append('Use /scan to retry importing them.')
             status_parts.append('Use /batch to approve or decline them.')
-        elif not telethon or not telethon.available:
-            status_parts.append('\n\n\u26a0\ufe0f Telethon (MTProto) is not configured.')
-            status_parts.append('Without it, the bot <b>cannot detect</b> pre-existing pending requests.')
-            status_parts.append('Use /scan after Telethon is configured to fetch them.')
 
         buttons = []
         buttons.append([InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='dashboard')])
@@ -175,21 +165,17 @@ async def _handle_bot_added(update, context, chat, db):
             logger.warning(f'Could not notify user {user.id}: {e}')
 
     except Exception as e:
-        logger.exception(f'Error handling bot added to {chat.id}: {e}')
+        logger.exception(f'Error in post-save setup for {chat.id}: {e}')
 
 async def _handle_bot_removed(update, context, chat, db):
-    """Handle bot being removed from a channel."""
     user = update.my_chat_member.from_user
     logger.info(f'Bot removed from channel: {chat.title} ({chat.id}) by user {user.id}')
-
     try:
         await db.update_channel_setting(chat.id, 'is_active', False)
-
         try:
             await context.bot.send_message(
                 chat_id=user.id,
-                text=f'\u274c Bot was removed from <b>{chat.title}</b>.\n\n'
-                     'The channel has been deactivated. Add the bot back as admin to reactivate.',
+                text=f'\u274c Bot was removed from <b>{chat.title}</b>.\n\nThe channel has been deactivated. Add the bot back as admin to reactivate.',
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='dashboard')]
@@ -197,47 +183,34 @@ async def _handle_bot_removed(update, context, chat, db):
             )
         except Exception as e:
             logger.warning(f'Could not notify user {user.id}: {e}')
-
     except Exception as e:
         logger.exception(f'Error handling bot removed from {chat.id}: {e}')
 
 async def _handle_permissions_updated(update, context, chat, db):
-    """Handle bot permissions being updated in a channel."""
     user = update.my_chat_member.from_user
     logger.info(f'Bot permissions updated in: {chat.title} ({chat.id})')
-
     try:
         bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
         can_invite = getattr(bot_member, 'can_invite_users', False)
-
         if can_invite:
             msg = f'\u2705 Bot now has invite permission in <b>{chat.title}</b>.\nJoin requests can be managed.'
         else:
             msg = f'\u26a0\ufe0f Bot lost invite permission in <b>{chat.title}</b>.\nPlease grant "Invite Users" permission.'
-
         try:
             await context.bot.send_message(
-                chat_id=user.id,
-                text=msg,
-                parse_mode='HTML',
+                chat_id=user.id, text=msg, parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(f'\u2699\ufe0f Manage {chat.title}', callback_data=f'manage_channel:{chat.id}')]
                 ])
             )
         except Exception:
             pass
-
     except Exception as e:
         logger.exception(f'Error handling permissions update for {chat.id}: {e}')
 
 async def process_existing_pending_requests(context, chat_id, db, action='approve', limit=None):
-    """Process existing pending join requests for a channel.
-    Uses Telethon to fetch real pending requests from Telegram.
-    """
     result = {'processed': 0, 'success': 0, 'failed': 0, 'total_pending': 0}
-
     try:
-        # First, sync pending requests from Telethon if available
         telethon = context.application.bot_data.get('telethon')
         if telethon and telethon.available:
             try:
@@ -257,13 +230,10 @@ async def process_existing_pending_requests(context, chat_id, db, action='approv
             except Exception as e:
                 logger.warning(f'Telethon sync failed for {chat_id}: {e}')
 
-        # Get pending requests from database
         pending = await db.get_pending_requests(chat_id, limit=limit)
         result['total_pending'] = await db.get_pending_count(chat_id)
-
         if not pending:
             return result
-
         for req in pending:
             user_id = req['user_id']
             result['processed'] += 1
@@ -272,7 +242,6 @@ async def process_existing_pending_requests(context, chat_id, db, action='approv
                     await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
                 else:
                     await context.bot.decline_chat_join_request(chat_id=chat_id, user_id=user_id)
-
                 await db.update_join_request_status(user_id, chat_id, 'approved' if action == 'approve' else 'declined', 'batch')
                 result['success'] += 1
             except Exception as e:
@@ -283,19 +252,14 @@ async def process_existing_pending_requests(context, chat_id, db, action='approv
                 else:
                     result['failed'] += 1
                     logger.debug(f'Failed to {action} {user_id} in {chat_id}: {e}')
-
-            # Rate limit protection
             if result['processed'] % 30 == 0:
                 await asyncio.sleep(1)
             else:
                 await asyncio.sleep(0.05)
-
         final_pending = await db.get_pending_count(chat_id)
         await db.update_channel_setting(chat_id, 'pending_requests', final_pending)
         logger.info(f'Batch {action}: processed={result["processed"]}, success={result["success"]}, failed={result["failed"]}, remaining_pending={final_pending}')
-
         return result
-
     except Exception as e:
         logger.error(f'Error in process_existing_pending_requests: {e}')
         return result
