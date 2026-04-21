@@ -170,12 +170,18 @@ class SchedulerService:
         for ch in channels:
             if not ch.get('force_subscribe_enabled'):
                 continue
-            timeout_hours = ch.get('force_sub_timeout', 0) or 0
+            raw_timeout = ch.get('force_sub_timeout', 0)
+            try:
+                timeout_hours = int(float(raw_timeout)) if raw_timeout not in (None, '', False) else 0
+            except (TypeError, ValueError):
+                logger.warning(f"Invalid force_sub_timeout for {ch.get('chat_id')}: {raw_timeout!r}")
+                timeout_hours = 0
             if timeout_hours <= 0:
                 continue
             if ch.get('force_sub_mode') == 'manual':
                 continue
-            if ch.get('auto_approve') is False:
+            auto_appr = ch.get('auto_approve')
+            if auto_appr is False or auto_appr == 0 or (isinstance(auto_appr, str) and auto_appr.lower() in ('false', '0', 'no')):
                 continue
             chat_id = ch['chat_id']
             required_channels = ch.get('force_subscribe_channels') or []
