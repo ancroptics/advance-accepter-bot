@@ -43,7 +43,7 @@ async def channel_detection_handler(update: Update, context: ContextTypes.DEFAUL
 
     if new_status in ('administrator', 'creator') and old_status not in ('administrator', 'creator'):
         await _handle_bot_added(update, context, chat, db)
-    elif new_status in ('left', 'kicked') and old_status in ('administrator', 'creator', 'member'):
+    elif new_status in ('left', 'kicked', 'restricted') and old_status not in ('left', 'kicked'):
         await _handle_bot_removed(update, context, chat, db)
     elif new_status == 'administrator' and old_status == 'administrator':
         await _handle_permissions_updated(update, context, chat, db)
@@ -169,22 +169,51 @@ async def _handle_bot_added(update, context, chat, db):
 
 async def _handle_bot_removed(update, context, chat, db):
     user = update.my_chat_member.from_user
-    logger.info(f'Bot removed from channel: {chat.title} ({chat.id}) by user {user.id}')
+    logger.info(f'Bot removed from channel: {chat.title} ({chat.id}) by user {user.id if user else "?"}')
+
+    owner_id = None
+    try:
+        channel_row = await db.get_channel(chat.id)
+        if channel_row:
+            owner_id = channel_row.get('owner_id') if hasattr(channel_row, 'get') else channel_row['owner_id']
+    except Exception as e:
+        logger.warning(f'Could not fetch channel {chat.id} during removal: {e}')
+
     try:
         await db.update_channel_setting(chat.id, 'is_active', False)
+    except Exception as e:
+        logger.exception(f'Error deactivating channel {chat.id}: {e}')
+    try:
+        await db.update_channel_setting(chat.id, 'bot_is_admin', False)
+    except Exception:
+        pass
+
+    notify_targets = []
+    if owner_id:
+        notify_targets.append(owner_id)
+    if user and user.id and user.id not in notify_targets and not getattr(user, 'is_bot', False):
+        notify_targets.append(user.id)
+
+    text = (f'\u274c Bot was removed from <b>{chat.title}</b>.\n\n'
+            f'The channel has been deactivated. Add the bot back as admin to reactivate.')
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='dashboard')]
+    ])
+
+    delivered = False
+    for target_id in notify_targets:
         try:
             await context.bot.send_message(
-                chat_id=user.id,
-                text=f'\u274c Bot was removed from <b>{chat.title}</b>.\n\nThe channel has been deactivated. Add the bot back as admin to reactivate.',
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('\U0001f4ca Dashboard', callback_data='dashboard')]
-                ])
+                chat_id=target_id, text=text, parse_mode='HTML', reply_markup=markup
             )
+            delivered = True
+            logger.info(f'Removal notice delivered to {target_id} for channel {chat.id}')
+            break
         except Exception as e:
-            logger.warning(f'Could not notify user {user.id}: {e}')
-    except Exception as e:
-        logger.exception(f'Error handling bot removed from {chat.id}: {e}')
+            logger.warning(f'Could not notify {target_id} about removal from {chat.id}: {e}')
+
+    if not delivered:
+        logger.warning(f'Bot removed from {chat.id} ({chat.title}) - no reachable owner to notify')
 
 async def _handle_permissions_updated(update, context, chat, db):
     user = update.my_chat_member.from_user
