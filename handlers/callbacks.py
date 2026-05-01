@@ -783,14 +783,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         elif data == 'default_force_sub':
-            # Show force sub settings that apply to all channels
+            # Show force sub settings that apply to all channels (parallel DB fetches for speed)
+            import asyncio as _asyncio
             channels = await db.get_owner_channels(user_id)
             ch_count = len(channels) if channels else 0
-            enabled_count = 0
-            for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
-                if full_ch and full_ch.get('force_subscribe_enabled'):
-                    enabled_count += 1
+            full_channels = []
+            if channels:
+                full_channels = await _asyncio.gather(
+                    *[db.get_channel(ch['chat_id']) for ch in channels],
+                    return_exceptions=True
+                )
+                full_channels = [fc if not isinstance(fc, Exception) else None for fc in full_channels]
+            full_ch_map = {channels[i]['chat_id']: full_channels[i] for i in range(len(channels or []))}
+            enabled_count = sum(1 for fc in full_channels if fc and fc.get('force_subscribe_enabled'))
 
             # Get dashboard-level default force sub channels
             default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
@@ -825,7 +830,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if default_fsub:
                 buttons.append([InlineKeyboardButton('\U0001f5d1 Remove Default Channel', callback_data='remove_default_fsub_menu')])
             for ch in (channels or []):
-                full_ch = await db.get_channel(ch['chat_id'])
+                full_ch = full_ch_map.get(ch['chat_id'])
                 fs_on = full_ch.get('force_subscribe_enabled', False) if full_ch else False
                 icon = '\u2705' if fs_on else '\u274c'
                 title = ch.get('chat_title', 'Unknown')[:20]
@@ -1561,31 +1566,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         # --- Dashboard menu buttons ---
-        elif data == 'broadcast':
-            # Show broadcast channel selection
-            channels = await db.get_owner_channels(user_id)
-            if not channels:
-                await query.edit_message_text('No channels found. Add a channel first.',
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')]]))
-                return
-            buttons = []
-            for ch in channels:
-                buttons.append([InlineKeyboardButton(
-                    ch.get('chat_title', 'Unknown'),
-                    callback_data=f"broadcast_to:{ch['chat_id']}"
-                )])
-            buttons.append([InlineKeyboardButton('\U0001f519 Back', callback_data='dashboard')])
-            await query.edit_message_text('\U0001f4e2 Select channel to broadcast to:',
-                reply_markup=InlineKeyboardMarkup(buttons))
-
-        elif data.startswith('broadcast_to:'):
-            chat_id = int(data.split(':')[1])
-            context.user_data['broadcast_channel'] = chat_id
-            channel = await db.get_channel(chat_id)
-            title = channel.get('chat_title', 'Unknown') if channel else 'Unknown'
-            await query.edit_message_text(
-                f'\U0001f4e2 Broadcast to: {title}\n\nSend me the message to broadcast.\nSend /cancel to cancel.',
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data=f'channel:{chat_id}')]]))
+        # 'broadcast' callback is now handled by broadcast_conv_handler (superadmin-only entry, see broadcast.py)
 
         elif data == 'analytics_overview':
             channels = await db.get_owner_channels(user_id)
