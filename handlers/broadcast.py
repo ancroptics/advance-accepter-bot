@@ -2,6 +2,7 @@ import logging
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CommandHandler, filters, CallbackQueryHandler
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,16 @@ async def start_broadcast(update, context):
         user_id = query.from_user.id
     else:
         user_id = update.effective_user.id
+    if user_id not in config.SUPERADMIN_IDS:
+        msg = '\u26d4 Broadcast is restricted to superadmins only.'
+        if update.callback_query:
+            try:
+                await update.callback_query.answer(msg, show_alert=True)
+            except Exception:
+                pass
+        else:
+            await update.message.reply_text(msg)
+        return ConversationHandler.END
     db = context.application.bot_data.get('db')
     owner = await db.get_owner(user_id)
     if not owner:
