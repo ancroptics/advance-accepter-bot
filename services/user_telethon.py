@@ -24,11 +24,12 @@ def _client(session_string=''):
     )
 
 
-async def send_login_code(phone):
+async def send_login_code(phone, force_sms=False):
     client = _client()
     await client.connect()
     try:
-        sent = await client.send_code_request(phone)
+        sent = await client.send_code_request(phone, force_sms=force_sms)
+        await asyncio.sleep(1)
         return client.session.save(), sent.phone_code_hash
     finally:
         await client.disconnect()
