@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS platform_settings (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS force_sub_join_requests (
+    user_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    requested_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (user_id, chat_id)
+);
+
 -- Insert default watermark settings
 INSERT INTO platform_settings (key, value) VALUES ('global_watermark_enabled', 'true')
 ON CONFLICT (key) DO NOTHING;
