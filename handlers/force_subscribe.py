@@ -44,14 +44,21 @@ async def verify_force_subscribe(update, context, chat_id):
     channel = await db.get_channel(chat_id)
     if not channel:
         return
-    required_channels_raw = channel.get('force_subscribe_channels') or []
-    if isinstance(required_channels_raw, str):
+    required_channels = _parse_force_channels(channel.get('force_subscribe_channels') or [])
+    force_channels_updated = False
+    for req_ch in required_channels:
+        if not isinstance(req_ch, dict) or req_ch.get('url') or not req_ch.get('chat_id'):
+            continue
         try:
-            required_channels = json.loads(required_channels_raw)
-        except (ValueError, TypeError):
-            required_channels = []
-    else:
-        required_channels = required_channels_raw if isinstance(required_channels_raw, list) else []
+            force_chat = await context.bot.get_chat(req_ch['chat_id'])
+            repaired = await build_force_sub_entry(context, force_chat)
+            if repaired.get('url'):
+                req_ch.update(repaired)
+                force_channels_updated = True
+        except Exception as e:
+            logger.warning(f'Could not repair force-sub invite link for {req_ch.get("chat_id")}: {e}')
+    if force_channels_updated:
+        await db.update_channel_setting(chat_id, 'force_subscribe_channels', json.dumps(required_channels))
     all_joined = True
     not_joined = []
     for req_ch in required_channels:
@@ -92,6 +99,113 @@ async def verify_force_subscribe(update, context, chat_id):
 force_subscribe_conv_handler = None
 
 FORCE_SUB_INPUT = 100
+
+
+def _parse_force_channels(channels_raw):
+    if isinstance(channels_raw, str):
+        try:
+            parsed = json.loads(channels_raw)
+        except (ValueError, TypeError):
+            parsed = []
+    elif isinstance(channels_raw, list):
+        parsed = channels_raw
+    else:
+        parsed = []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _stale_callback_error(error):
+    text = str(error).lower()
+    return (
+        'query is too old' in text
+        or 'query id is invalid' in text
+        or 'response timeout expired' in text
+    )
+
+
+async def _create_force_sub_invite_url(context, chat_info):
+    username = getattr(chat_info, 'username', None)
+    if username:
+        return f'https://t.me/{username}'
+
+    try:
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=chat_info.id,
+            name='Force Subscribe',
+            creates_join_request=False,
+        )
+        return invite.invite_link
+    except Exception as e:
+        logger.warning(f'Could not create force-sub invite link for {chat_info.id}: {e}')
+        return ''
+
+
+async def build_force_sub_entry(context, chat_info):
+    return {
+        'chat_id': chat_info.id,
+        'title': chat_info.title,
+        'username': chat_info.username or '',
+        'url': await _create_force_sub_invite_url(context, chat_info),
+    }
+
+
+async def remove_force_sub_callback(update, context):
+    query = update.callback_query
+    db = context.application.bot_data.get('db')
+    try:
+        await query.answer('Removed')
+    except Exception as e:
+        if not _stale_callback_error(e):
+            logger.debug(f'Could not answer remove force-sub callback: {e}')
+
+    try:
+        parts = query.data.split(':')
+        parent_chat_id = int(parts[1])
+        remove_chat_id = int(parts[2])
+        channel = await db.get_channel(parent_chat_id)
+        if not channel:
+            await query.edit_message_text('Channel not found.')
+            return
+
+        force_channels = _parse_force_channels(channel.get('force_subscribe_channels', '[]'))
+        force_channels = [
+            ch for ch in force_channels
+            if isinstance(ch, dict) and ch.get('chat_id') != remove_chat_id
+        ]
+        await db.update_channel_setting(
+            parent_chat_id,
+            'force_subscribe_channels',
+            json.dumps(force_channels),
+        )
+
+        try:
+            from handlers.callbacks import show_force_sub_settings
+            await show_force_sub_settings(query, db, parent_chat_id)
+        except Exception as e:
+            if 'message is not modified' in str(e).lower():
+                return
+            if _stale_callback_error(e):
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text='✅ Force sub channel removed.',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton('🔙 Force Subscribe Settings', callback_data=f'force_sub_settings:{parent_chat_id}')
+                    ]])
+                )
+                return
+            raise
+    except Exception as e:
+        logger.exception(f'Error removing force-sub channel: {e}')
+        try:
+            await query.edit_message_text(
+                f'Could not remove force sub channel: {str(e)[:120]}',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton('🔙 Dashboard', callback_data='dashboard')
+                ]])
+            )
+        except Exception:
+            pass
+
 
 async def _resolve_channel_input(update, context):
     """Resolve channel from text (username/ID/invite link) or forwarded message. Returns chat_info or None."""
@@ -239,26 +353,21 @@ async def handle_force_sub_channel_input(update, context):
             return FORCE_SUB_INPUT
         
         channel = await db.get_channel(chat_id)
-        current_channels_raw = channel.get('force_subscribe_channels') or []
-        if isinstance(current_channels_raw, str):
-            try:
-                current_channels = json.loads(current_channels_raw)
-            except (ValueError, TypeError):
-                current_channels = []
-        else:
-            current_channels = current_channels_raw if isinstance(current_channels_raw, list) else []
+        current_channels = _parse_force_channels(channel.get('force_subscribe_channels') or [])
         
         for ch in current_channels:
             if ch.get('chat_id') == chat_info.id:
                 await update.message.reply_text(f'\u26a0\ufe0f {chat_info.title} is already in the force subscribe list!')
                 return ConversationHandler.END
         
-        new_entry = {
-            'chat_id': chat_info.id,
-            'title': chat_info.title,
-            'username': chat_info.username or '',
-            'url': f'https://t.me/{chat_info.username}' if chat_info.username else '',
-        }
+        new_entry = await build_force_sub_entry(context, chat_info)
+        if not new_entry.get('url'):
+            await update.message.reply_text(
+                f'⚠️ I can verify membership in {chat_info.title}, but I could not create an invite link.\n\n'
+                'For private force-sub channels, give the bot permission to invite users or create invite links, then send the channel again.\n\n'
+                'Send /cancel to abort.'
+            )
+            return FORCE_SUB_INPUT
         
         # Check channel slot limit (base from tier + referral bonus)
         import config as _cfg
@@ -388,12 +497,14 @@ async def handle_default_fsub_channel_input(update, context):
                 await update.message.reply_text(f'\u26a0\ufe0f {chat_info.title} is already in the default force subscribe list!')
                 return ConversationHandler.END
 
-        new_entry = {
-            'chat_id': chat_info.id,
-            'title': chat_info.title,
-            'username': chat_info.username or '',
-            'url': f'https://t.me/{chat_info.username}' if chat_info.username else '',
-        }
+        new_entry = await build_force_sub_entry(context, chat_info)
+        if not new_entry.get('url'):
+            await update.message.reply_text(
+                f'⚠️ I can verify membership in {chat_info.title}, but I could not create an invite link.\n\n'
+                'For private force-sub channels, give the bot permission to invite users or create invite links, then send the channel again.\n\n'
+                'Send /cancel to abort.'
+            )
+            return DEFAULT_FSUB_INPUT
 
         # Check channel slot limit (base from tier + referral bonus)
         import config as _cfg
