@@ -225,7 +225,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _save_connected_session(db, user_id, encrypt_text(result['session']))
     except PhoneCodeExpiredError:
         try:
-            temp_session, code_hash = await user_telethon.send_login_code(row['phone'])
+            temp_session, code_hash = await user_telethon.send_login_code(row['phone'], force_sms=True)
             await _save_login_state(db, user_id, row['phone'], encrypt_text(temp_session), code_hash)
             await update.message.reply_text(
                 'That Telegram login code expired. I sent a fresh code now.\n\n'
@@ -315,7 +315,7 @@ async def resend_login_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
-        temp_session, code_hash = await user_telethon.send_login_code(row['phone'])
+        temp_session, code_hash = await user_telethon.send_login_code(row['phone'], force_sms=True)
         await _save_login_state(db, user_id, row['phone'], encrypt_text(temp_session), code_hash)
         await query.edit_message_text(
             'I sent a fresh Telegram login code now.\n\n'
