@@ -130,7 +130,7 @@ async def batch_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data.startswith('batch_approve:'):
         parts = data.split(':')
         chat_id = int(parts[1])
-        count = int(parts[2])
+        count = int(parts[2]) if len(parts) > 2 else -1
         await _execute_batch_approve(query, context, user_id, chat_id, count)
 
     elif data.startswith('batch_decline:'):

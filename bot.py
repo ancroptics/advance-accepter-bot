@@ -12,6 +12,7 @@ from telegram.ext import Application
 import config
 from database.connection import DatabasePool
 from database.models import DatabaseModels
+from database.runtime_fixes import apply_runtime_fixes
 from services.clone_manager import CloneManager
 from services.scheduler_service import SchedulerService
 from services.telethon_client import TelethonService
@@ -22,6 +23,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+apply_runtime_fixes(DatabaseModels)
 
 async def error_handler(update, context):
     logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
@@ -76,7 +79,7 @@ class Bot:
             self.scheduler = SchedulerService(self.app)
             self.app.bot_data['scheduler'] = self.scheduler
 
-            self.clone_manager = CloneManager(self.db)
+            self.clone_manager = CloneManager(self.app)
             self.app.bot_data['clone_manager'] = self.clone_manager
 
             register_all_handlers(self.app)
