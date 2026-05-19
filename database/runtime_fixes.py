@@ -22,6 +22,12 @@ async def run_migrations(self):
                 value TEXT,
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
+            CREATE TABLE IF NOT EXISTS force_sub_join_requests (
+                user_id BIGINT NOT NULL,
+                chat_id BIGINT NOT NULL,
+                requested_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (user_id, chat_id)
+            );
             ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
             ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS support_username TEXT;
             ALTER TABLE managed_channels ADD COLUMN IF NOT EXISTS referral_enabled BOOLEAN DEFAULT FALSE;
@@ -239,7 +245,7 @@ async def get_active_clones(self):
 
 
 async def delete_clone(self, clone_id):
-    return await self.db.execute('DELETE FROM bot_clones WHERE clone_id = $1', clone_id)
+    return await self.db.execute('DELETE FROM bot_clones WHERE clone_id = $1')
 
 
 async def create_broadcast(self, owner_id, content_type='text', content=None,
