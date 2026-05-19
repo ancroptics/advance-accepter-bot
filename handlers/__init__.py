@@ -2,7 +2,7 @@ import logging
 from telegram.ext import (
     CommandHandler, MessageHandler, CallbackQueryHandler,
     ChatMemberHandler, ChatJoinRequestHandler, ConversationHandler,
-    filters
+    ApplicationHandlerStop, filters
 )
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from handlers.callbacks import callback_router
@@ -88,9 +88,22 @@ def register_handlers(application):
         per_message=False,
     )
     application.add_handler(force_sub_conv)
-    application.add_handler(CallbackQueryHandler(force_sub_invite_mode_callback, pattern=r'^fsub_invite_mode:'), group=-1)
-    application.add_handler(CallbackQueryHandler(remove_force_sub_callback, pattern=r'^remove_force_sub:'), group=-1)
-    application.add_handler(CallbackQueryHandler(verify_force_sub_callback, pattern=r'^verify_force_sub:'), group=-1)
+
+    async def stop_after_force_sub_invite_mode(update, context):
+        await force_sub_invite_mode_callback(update, context)
+        raise ApplicationHandlerStop
+
+    async def stop_after_remove_force_sub(update, context):
+        await remove_force_sub_callback(update, context)
+        raise ApplicationHandlerStop
+
+    async def stop_after_verify_force_sub(update, context):
+        await verify_force_sub_callback(update, context)
+        raise ApplicationHandlerStop
+
+    application.add_handler(CallbackQueryHandler(stop_after_force_sub_invite_mode, pattern=r'^fsub_invite_mode:'), group=-1)
+    application.add_handler(CallbackQueryHandler(stop_after_remove_force_sub, pattern=r'^remove_force_sub:'), group=-1)
+    application.add_handler(CallbackQueryHandler(stop_after_verify_force_sub, pattern=r'^verify_force_sub:'), group=-1)
 
     # 5a2. Default force sub channel input conversation handler (dashboard-level)
     from handlers.force_subscribe import handle_default_fsub_channel_input, start_add_default_fsub_channel, DEFAULT_FSUB_INPUT
