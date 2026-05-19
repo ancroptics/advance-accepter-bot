@@ -34,35 +34,6 @@ async def send_login_code(phone):
         await client.disconnect()
 
 
-async def start_login_client(phone):
-    client = _client()
-    await client.connect()
-    try:
-        sent = await client.send_code_request(phone)
-        return client, client.session.save(), sent.phone_code_hash
-    except Exception:
-        await client.disconnect()
-        raise
-
-
-async def complete_active_login(client, phone, code):
-    try:
-        await client.sign_in(phone=phone, code=code)
-    except SessionPasswordNeededError:
-        return {'needs_password': True, 'temp_session': client.session.save()}
-    return {'session': client.session.save()}
-
-
-async def complete_active_password(client, password):
-    await client.sign_in(password=password)
-    return client.session.save()
-
-
-async def disconnect_client(client):
-    if client:
-        await client.disconnect()
-
-
 async def complete_login(temp_session, phone, code_hash, code):
     client = _client(temp_session)
     await client.connect()
