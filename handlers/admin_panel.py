@@ -42,6 +42,7 @@ async def show_dashboard(update, context, edit=False):
         text += 'No channels yet. Add the bot as admin to a channel!\n\n'
     buttons.extend([
         [InlineKeyboardButton('\U0001f4e2 My Channels', callback_data='my_channels')],
+        [InlineKeyboardButton('\U0001f510 Old Request Sync', callback_data='telegram_session_menu')],
         [InlineKeyboardButton('\U0001f4e9 Welcome Message', callback_data='default_welcome_msg'),
          InlineKeyboardButton('\U0001f512 Force Sub', callback_data='default_force_sub')],
     ])
