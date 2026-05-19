@@ -15,6 +15,7 @@ from database.models import DatabaseModels
 from database.runtime_fixes import apply_runtime_fixes
 from services.clone_manager import CloneManager
 from services.clone_force_sub_patches import apply_clone_force_sub_patches
+from services.account_force_sub_hotfixes import apply_account_force_sub_hotfixes
 from services.scheduler_service import SchedulerService
 from services.telethon_client import TelethonService
 from handlers import register_all_handlers
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 apply_runtime_fixes(DatabaseModels)
 apply_clone_force_sub_patches()
+apply_account_force_sub_hotfixes()
 
 async def error_handler(update, context):
     logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
