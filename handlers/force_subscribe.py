@@ -62,12 +62,7 @@ async def verify_force_subscribe(update, context, chat_id):
     all_joined = True
     not_joined = []
     for req_ch in required_channels:
-        try:
-            member = await context.bot.get_chat_member(req_ch['chat_id'], user_id)
-            if member.status in ('left', 'kicked'):
-                all_joined = False
-                not_joined.append(req_ch)
-        except Exception:
+        if not await _force_sub_requirement_satisfied(context, db, req_ch, user_id):
             all_joined = False
             not_joined.append(req_ch)
     if all_joined:
@@ -186,6 +181,49 @@ async def _force_sub_slot_limit(db, user_id):
         base_slots = 1
     bonus_slots = await db.get_referral_bonus_slots(user_id)
     return base_slots, bonus_slots, base_slots + bonus_slots
+
+
+async def _ensure_force_sub_request_table(db):
+    await db.pool.execute("""
+        CREATE TABLE IF NOT EXISTS force_sub_join_requests (
+            user_id BIGINT NOT NULL,
+            chat_id BIGINT NOT NULL,
+            requested_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (user_id, chat_id)
+        )
+    """)
+
+
+async def record_force_sub_join_request(db, user_id, chat_id):
+    await _ensure_force_sub_request_table(db)
+    await db.pool.execute("""
+        INSERT INTO force_sub_join_requests (user_id, chat_id, requested_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (user_id, chat_id) DO UPDATE SET requested_at = NOW()
+    """, user_id, chat_id)
+
+
+async def _has_force_sub_join_request(db, user_id, chat_id):
+    await _ensure_force_sub_request_table(db)
+    row = await db.pool.fetchrow(
+        'SELECT 1 FROM force_sub_join_requests WHERE user_id = $1 AND chat_id = $2',
+        user_id,
+        chat_id,
+    )
+    return bool(row)
+
+
+async def _force_sub_requirement_satisfied(context, db, req_ch, user_id):
+    try:
+        member = await context.bot.get_chat_member(req_ch['chat_id'], user_id)
+        if member.status not in ('left', 'kicked'):
+            return True
+    except Exception:
+        pass
+
+    if req_ch.get('invite_requires_approval'):
+        return await _has_force_sub_join_request(db, user_id, req_ch['chat_id'])
+    return False
 
 
 async def force_sub_invite_mode_callback(update, context):
@@ -319,22 +357,19 @@ async def remove_force_sub_callback(update, context):
             json.dumps(force_channels),
         )
 
+        text = '✅ Force sub channel removed.'
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton('🔙 Force Subscribe Settings', callback_data=f'force_sub_settings:{parent_chat_id}')
+        ]])
         try:
-            from handlers.callbacks import show_force_sub_settings
-            await show_force_sub_settings(query, db, parent_chat_id)
-        except Exception as e:
-            if 'message is not modified' in str(e).lower():
-                return
-            if _stale_callback_error(e):
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text='✅ Force sub channel removed.',
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton('🔙 Force Subscribe Settings', callback_data=f'force_sub_settings:{parent_chat_id}')
-                    ]])
-                )
-                return
-            raise
+            await context.bot.edit_message_text(
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
+                text=text,
+                reply_markup=markup,
+            )
+        except Exception:
+            await context.bot.send_message(query.message.chat_id, text, reply_markup=markup)
     except Exception as e:
         logger.exception(f'Error removing force-sub channel: {e}')
         try:
@@ -346,6 +381,59 @@ async def remove_force_sub_callback(update, context):
             )
         except Exception:
             pass
+
+
+async def verify_force_sub_callback(update, context):
+    query = update.callback_query
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    db = context.application.bot_data.get('db')
+    chat_id = int(query.data.split(':')[1])
+    user_id = query.from_user.id
+    channel = await db.get_channel(chat_id)
+    if not channel:
+        await query.edit_message_text('Channel not found.')
+        return
+
+    force_channels = _parse_force_channels(channel.get('force_subscribe_channels', '[]'))
+    not_joined = []
+    for req_ch in force_channels:
+        if not await _force_sub_requirement_satisfied(context, db, req_ch, user_id):
+            not_joined.append(req_ch)
+
+    if not_joined:
+        text = 'You still need to join or request access to these channels:\n\n'
+        buttons = []
+        for ch in not_joined:
+            text += f"• {ch.get('title', 'Channel')}\n"
+            if ch.get('url'):
+                buttons.append([InlineKeyboardButton(f"📢 Join {ch.get('title', '')}", url=ch['url'])])
+        text += '\nThen click verify again.'
+        buttons.append([InlineKeyboardButton("✅ I've Joined — Verify Me", callback_data=f'verify_force_sub:{chat_id}')])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    force_sub_mode = channel.get('force_sub_mode', 'auto')
+    if force_sub_mode == 'manual':
+        await db.update_join_request_force_sub(user_id, chat_id, False)
+        await query.edit_message_text('✅ Verified! Your request is pending admin approval.')
+        return
+    if force_sub_mode == 'drip':
+        await db.update_join_request_force_sub(user_id, chat_id, False)
+        await query.edit_message_text('✅ Verified! Your request is queued for drip approval.')
+        return
+
+    try:
+        await context.bot.approve_chat_join_request(chat_id, user_id)
+        await db.update_join_request_status(user_id, chat_id, 'approved', 'force_sub')
+        await db.update_force_sub_completed(user_id, chat_id)
+        await query.edit_message_text(f'✅ Verified! You have been approved to join {channel["chat_title"]}!')
+    except Exception as e:
+        logger.error(f'Error approving after force sub verify: {e}')
+        await query.edit_message_text('✅ Verified! You should now have access.')
 
 
 async def _resolve_channel_input(update, context):
