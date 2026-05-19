@@ -63,6 +63,7 @@ def register_handlers(application):
     # 5. Force sub channel input conversation handler
     from handlers.force_subscribe import (
         FORCE_SUB_INPUT,
+        force_sub_invite_mode_callback,
         handle_force_sub_channel_input,
         remove_force_sub_callback,
         start_add_force_sub_channel,
@@ -86,6 +87,7 @@ def register_handlers(application):
         per_message=False,
     )
     application.add_handler(force_sub_conv)
+    application.add_handler(CallbackQueryHandler(force_sub_invite_mode_callback, pattern=r'^fsub_invite_mode:'))
     application.add_handler(CallbackQueryHandler(remove_force_sub_callback, pattern=r'^remove_force_sub:'))
 
     # 5a2. Default force sub channel input conversation handler (dashboard-level)
