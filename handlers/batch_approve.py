@@ -18,6 +18,10 @@ TIER_LIMITS = {
 BATCH_SIZES = [10, 50, 100, 500, 1000]
 
 
+def _eligible_for_batch_approve(req):
+    return req.get('force_sub_required') is None or req.get('force_sub_completed')
+
+
 async def batch_approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/batch - Show batch approval panel for all channels with pending requests."""
     user_id = update.effective_user.id
@@ -169,6 +173,7 @@ async def _execute_batch_all(query, context, user_id):
         chat_id = ch['chat_id']
         title = ch.get('chat_title', 'Unknown')
         pending = await db.get_pending_requests(chat_id, limit=10000)
+        pending = [req for req in (pending or []) if _eligible_for_batch_approve(req)]
 
         approved = 0
         failed = 0
@@ -223,9 +228,10 @@ async def _execute_batch_approve(query, context, user_id, chat_id, count):
 
     fetch_limit = count if count > 0 else 10000
     pending = await db.get_pending_requests(chat_id, limit=fetch_limit)
+    pending = [req for req in (pending or []) if _eligible_for_batch_approve(req)]
 
     if not pending:
-        await query.edit_message_text("\u2728 No pending requests!")
+        await query.edit_message_text("\u2728 No eligible pending requests!")
         return
 
     # Limit by remaining quota
