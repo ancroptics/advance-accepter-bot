@@ -103,6 +103,31 @@ def _back_markup():
     return InlineKeyboardMarkup([[InlineKeyboardButton('🔙 Back', callback_data='telegram_session_menu')]])
 
 
+def _active_logins(context):
+    return context.application.bot_data.setdefault('telegram_login_clients', {})
+
+
+def _get_active_login(context, user_id, phone=None):
+    active = _active_logins(context).get(user_id)
+    if active and (phone is None or active.get('phone') == phone):
+        return active
+    return None
+
+
+async def _drop_active_login(context, user_id):
+    active = _active_logins(context).pop(user_id, None)
+    if active:
+        try:
+            await user_telethon.disconnect_client(active.get('client'))
+        except Exception:
+            pass
+
+
+async def _replace_active_login(context, user_id, phone, client):
+    await _drop_active_login(context, user_id)
+    _active_logins(context)[user_id] = {'phone': phone, 'client': client}
+
+
 async def show_telegram_session_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     db = context.application.bot_data.get('db')
@@ -169,9 +194,11 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text('Sending Telegram login code...')
     try:
-        temp_session, code_hash = await user_telethon.send_login_code(phone)
+        client, temp_session, code_hash = await user_telethon.start_login_client(phone)
+        await _replace_active_login(context, user_id, phone, client)
         await _save_login_state(db, user_id, phone, encrypt_text(temp_session), code_hash)
     except Exception as e:
+        await _drop_active_login(context, user_id)
         logger.warning(f'Telegram login code send failed for owner {user_id}: {e}')
         await update.message.reply_text(
             f'Could not send login code: {str(e)[:120]}',
@@ -201,12 +228,20 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
-        result = await user_telethon.complete_login(
-            decrypt_text(row['temp_session_encrypted']),
-            row['phone'],
-            row['phone_code_hash'],
-            code,
-        )
+        active = _get_active_login(context, user_id, row['phone'])
+        if active:
+            result = await user_telethon.complete_active_login(
+                active['client'],
+                row['phone'],
+                code,
+            )
+        else:
+            result = await user_telethon.complete_login(
+                decrypt_text(row['temp_session_encrypted']),
+                row['phone'],
+                row['phone_code_hash'],
+                code,
+            )
         if result.get('needs_password'):
             await _save_password_state(db, user_id, encrypt_text(result['temp_session']))
             await update.message.reply_text(
@@ -216,9 +251,12 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return PASSWORD
         await _save_connected_session(db, user_id, encrypt_text(result['session']))
+        await _drop_active_login(context, user_id)
     except PhoneCodeExpiredError:
         try:
-            temp_session, code_hash = await user_telethon.send_login_code(row['phone'])
+            await _drop_active_login(context, user_id)
+            client, temp_session, code_hash = await user_telethon.start_login_client(row['phone'])
+            await _replace_active_login(context, user_id, row['phone'], client)
             await _save_login_state(db, user_id, row['phone'], encrypt_text(temp_session), code_hash)
             await update.message.reply_text(
                 'That Telegram login code expired. I sent a fresh code now.\n\n'
@@ -245,6 +283,7 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'Login failed: {str(e)[:120]}',
             reply_markup=_back_markup()
         )
+        await _drop_active_login(context, user_id)
         return ConversationHandler.END
 
     await update.message.reply_text(
@@ -270,17 +309,23 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
-        session = await user_telethon.complete_password(
-            decrypt_text(row['temp_session_encrypted']),
-            password,
-        )
+        active = _get_active_login(context, user_id, row.get('phone'))
+        if active:
+            session = await user_telethon.complete_active_password(active['client'], password)
+        else:
+            session = await user_telethon.complete_password(
+                decrypt_text(row['temp_session_encrypted']),
+                password,
+            )
         await _save_connected_session(db, user_id, encrypt_text(session))
+        await _drop_active_login(context, user_id)
     except Exception as e:
         logger.warning(f'Telegram 2FA login failed for owner {user_id}: {e}')
         await update.message.reply_text(
             f'2FA login failed: {str(e)[:120]}',
             reply_markup=_back_markup()
         )
+        await _drop_active_login(context, user_id)
         return ConversationHandler.END
 
     await update.message.reply_text(
@@ -293,6 +338,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _drop_active_login(context, update.effective_user.id)
     await update.message.reply_text('Telegram session login cancelled.', reply_markup=_back_markup())
     return ConversationHandler.END
 
@@ -301,6 +347,7 @@ async def disconnect_telegram_session(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer()
     db = context.application.bot_data.get('db')
+    await _drop_active_login(context, query.from_user.id)
     await _delete_session(db, query.from_user.id)
     await query.edit_message_text(
         '✅ Telegram session disconnected and removed.',
