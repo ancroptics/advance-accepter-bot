@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler, filters
@@ -47,6 +48,23 @@ def _code_sent_text(details=None, fresh=False):
         f'{fallback}\n\n'
         'Send /cancel to abort.'
     )
+
+
+def _fresh_code_sent_text(details=None):
+    stamp = datetime.utcnow().strftime('%H:%M:%S UTC')
+    return f'{_code_sent_text(details, fresh=True)}\n\nUpdated: {stamp}'
+
+
+async def _safe_edit_or_reply(query, text, reply_markup=None):
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        if 'message is not modified' not in str(e).lower():
+            raise
+        try:
+            await query.message.reply_text(text, reply_markup=reply_markup)
+        except Exception:
+            await query.answer('Fresh code sent. Check Telegram/SMS.', show_alert=True)
 
 
 def _delivery_details(sent):
@@ -227,6 +245,38 @@ def _patch_join_request_handlers():
     clone_manager.clone_join_request_handler = wrapped_clone_join_request_handler
 
 
+def _patch_force_sub_requirement():
+    import handlers.force_subscribe as force_subscribe
+
+    original_requirement = getattr(force_subscribe, '_original_force_sub_requirement_hotfix', None)
+    if original_requirement is None:
+        original_requirement = force_subscribe._force_sub_requirement_satisfied
+        force_subscribe._original_force_sub_requirement_hotfix = original_requirement
+
+    async def patched_requirement(context, db, req_ch, user_id):
+        if not req_ch.get('invite_requires_approval'):
+            return await original_requirement(context, db, req_ch, user_id)
+
+        try:
+            member = await context.bot.get_chat_member(req_ch['chat_id'], user_id)
+            if member.status not in ('left', 'kicked'):
+                return True
+        except Exception:
+            pass
+
+        try:
+            if await force_subscribe._has_force_sub_join_request(db, user_id, req_ch['chat_id']):
+                return True
+        except Exception as e:
+            logger.warning(f'Could not check force-sub request row for {user_id}: {e}')
+
+        # Bot API does not expose "pending join request" via get_chat_member.
+        # For approval-required force-sub invite links, the user's verify action is accepted.
+        return True
+
+    force_subscribe._force_sub_requirement_satisfied = patched_requirement
+
+
 def _patch_telegram_login():
     from services import user_telethon
     import handlers.telegram_session as tg
@@ -330,15 +380,17 @@ def _patch_telegram_login():
         try:
             temp_session, code_hash, details = await _send_login_code_with_details(row['phone'], force_sms=True)
             await tg._save_login_state(db, user_id, row['phone'], encrypt_text(temp_session), code_hash)
-            await query.edit_message_text(_code_sent_text(details, fresh=True), reply_markup=_code_markup())
-            return tg.CODE
         except Exception as e:
             logger.warning(f'Telegram code resend failed for owner {user_id}: {e}')
-            await query.edit_message_text(
+            await _safe_edit_or_reply(
+                query,
                 f'Could not send a fresh code: {str(e)[:120]}',
                 reply_markup=tg._back_markup(),
             )
             return ConversationHandler.END
+
+        await _safe_edit_or_reply(query, _fresh_code_sent_text(details), reply_markup=_code_markup())
+        return tg.CODE
 
     tg.handle_phone = handle_phone
     tg.handle_code = handle_code
@@ -364,5 +416,6 @@ def apply_account_force_sub_hotfixes():
     import handlers.force_subscribe as force_subscribe
 
     force_subscribe.process_force_sub_join_request = _process_force_sub_join_request
+    _patch_force_sub_requirement()
     _patch_join_request_handlers()
     _patch_telegram_login()
