@@ -183,19 +183,7 @@ async def _force_sub_slot_limit(db, user_id):
     return base_slots, bonus_slots, base_slots + bonus_slots
 
 
-async def _ensure_force_sub_request_table(db):
-    await db.pool.execute("""
-        CREATE TABLE IF NOT EXISTS force_sub_join_requests (
-            user_id BIGINT NOT NULL,
-            chat_id BIGINT NOT NULL,
-            requested_at TIMESTAMPTZ DEFAULT NOW(),
-            PRIMARY KEY (user_id, chat_id)
-        )
-    """)
-
-
 async def record_force_sub_join_request(db, user_id, chat_id):
-    await _ensure_force_sub_request_table(db)
     await db.pool.execute("""
         INSERT INTO force_sub_join_requests (user_id, chat_id, requested_at)
         VALUES ($1, $2, NOW())
@@ -204,7 +192,6 @@ async def record_force_sub_join_request(db, user_id, chat_id):
 
 
 async def _has_force_sub_join_request(db, user_id, chat_id):
-    await _ensure_force_sub_request_table(db)
     row = await db.pool.fetchrow(
         'SELECT 1 FROM force_sub_join_requests WHERE user_id = $1 AND chat_id = $2',
         user_id,
@@ -419,10 +406,12 @@ async def verify_force_sub_callback(update, context):
     force_sub_mode = channel.get('force_sub_mode', 'auto')
     if force_sub_mode == 'manual':
         await db.update_join_request_force_sub(user_id, chat_id, False)
+        await db.update_force_sub_completed(user_id, chat_id)
         await query.edit_message_text('✅ Verified! Your request is pending admin approval.')
         return
     if force_sub_mode == 'drip':
         await db.update_join_request_force_sub(user_id, chat_id, False)
+        await db.update_force_sub_completed(user_id, chat_id)
         await query.edit_message_text('✅ Verified! Your request is queued for drip approval.')
         return
 
