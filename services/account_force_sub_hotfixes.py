@@ -83,8 +83,16 @@ async def _send_login_code_with_details(phone, force_sms=False):
     await client.connect()
     try:
         sent = await client.send_code_request(phone, force_sms=force_sms)
-        await asyncio.sleep(1)
-        return client.session.save(), sent.phone_code_hash, _delivery_details(sent)
+        details = _delivery_details(sent)
+        logger.info(
+            'Telegram login code requested: delivery=%s next=%s timeout=%s force_sms=%s',
+            details.get('type'),
+            details.get('next_type'),
+            details.get('timeout'),
+            force_sms,
+        )
+        await asyncio.sleep(4)
+        return client.session.save(), sent.phone_code_hash, details
     finally:
         await client.disconnect()
 
@@ -100,6 +108,18 @@ def _parse_force_channels(raw):
     else:
         parsed = []
     return parsed if isinstance(parsed, list) else []
+
+
+def _is_approval_request_requirement(req_ch):
+    if not isinstance(req_ch, dict):
+        return False
+    url = req_ch.get('url') or ''
+    return (
+        bool(req_ch.get('invite_requires_approval'))
+        or bool(req_ch.get('creates_join_request'))
+        or 'joinchat' in url
+        or 't.me/+' in url
+    )
 
 
 async def _process_force_sub_join_request(context, db, user_id, force_chat_id):
@@ -130,7 +150,7 @@ async def _process_force_sub_join_request(context, db, user_id, force_chat_id):
         if not any(
             isinstance(ch, dict)
             and ch.get('chat_id') == force_chat_id
-            and ch.get('invite_requires_approval')
+            and _is_approval_request_requirement(ch)
             for ch in force_channels
         ):
             continue
@@ -176,7 +196,7 @@ async def _recheck_parent_force_sub_requests(context, db, user_id, parent_chat_i
         return
     force_channels = _parse_force_channels(channel.get('force_subscribe_channels') or [])
     for req_ch in force_channels:
-        if isinstance(req_ch, dict) and req_ch.get('invite_requires_approval') and req_ch.get('chat_id'):
+        if isinstance(req_ch, dict) and _is_approval_request_requirement(req_ch) and req_ch.get('chat_id'):
             await _process_force_sub_join_request(context, db, user_id, req_ch['chat_id'])
 
 
@@ -254,7 +274,7 @@ def _patch_force_sub_requirement():
         force_subscribe._original_force_sub_requirement_hotfix = original_requirement
 
     async def patched_requirement(context, db, req_ch, user_id):
-        if not req_ch.get('invite_requires_approval'):
+        if not _is_approval_request_requirement(req_ch):
             return await original_requirement(context, db, req_ch, user_id)
 
         try:
