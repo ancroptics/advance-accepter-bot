@@ -67,6 +67,7 @@ def register_handlers(application):
         handle_force_sub_channel_input,
         remove_force_sub_callback,
         start_add_force_sub_channel,
+        verify_force_sub_callback,
     )
 
     async def force_sub_entry(update, context):
@@ -87,8 +88,9 @@ def register_handlers(application):
         per_message=False,
     )
     application.add_handler(force_sub_conv)
-    application.add_handler(CallbackQueryHandler(force_sub_invite_mode_callback, pattern=r'^fsub_invite_mode:'))
-    application.add_handler(CallbackQueryHandler(remove_force_sub_callback, pattern=r'^remove_force_sub:'))
+    application.add_handler(CallbackQueryHandler(force_sub_invite_mode_callback, pattern=r'^fsub_invite_mode:'), group=-1)
+    application.add_handler(CallbackQueryHandler(remove_force_sub_callback, pattern=r'^remove_force_sub:'), group=-1)
+    application.add_handler(CallbackQueryHandler(verify_force_sub_callback, pattern=r'^verify_force_sub:'), group=-1)
 
     # 5a2. Default force sub channel input conversation handler (dashboard-level)
     from handlers.force_subscribe import handle_default_fsub_channel_input, start_add_default_fsub_channel, DEFAULT_FSUB_INPUT
@@ -179,6 +181,7 @@ def register_handlers(application):
     # 5f. Telegram user session connection for old request sync
     from handlers.telegram_session import (
         disconnect_telegram_session,
+        resend_login_code,
         show_telegram_session_menu,
         sync_old_requests_callback,
         telegram_session_conv_handler,
@@ -187,6 +190,7 @@ def register_handlers(application):
     application.add_handler(telegram_session_conv_handler)
     application.add_handler(CallbackQueryHandler(show_telegram_session_menu, pattern=r'^telegram_session_menu$'))
     application.add_handler(CallbackQueryHandler(disconnect_telegram_session, pattern=r'^tg_session_disconnect$'))
+    application.add_handler(CallbackQueryHandler(resend_login_code, pattern=r'^tg_session_resend_code$'))
     application.add_handler(CallbackQueryHandler(sync_old_requests_callback, pattern=r'^tg_sync_(all|channel:)'))
 
     # 5g. Batch approve/decline buttons
