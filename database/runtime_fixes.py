@@ -245,7 +245,7 @@ async def get_active_clones(self):
 
 
 async def delete_clone(self, clone_id):
-    return await self.db.execute('DELETE FROM bot_clones WHERE clone_id = $1')
+    return await self.db.execute('DELETE FROM bot_clones WHERE clone_id = $1', clone_id)
 
 
 async def create_broadcast(self, owner_id, content_type='text', content=None,
