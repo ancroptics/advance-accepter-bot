@@ -2,6 +2,7 @@ import logging
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telethon.errors import PhoneCodeExpiredError, PhoneCodeInvalidError
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -215,6 +216,29 @@ async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return PASSWORD
         await _save_connected_session(db, user_id, encrypt_text(result['session']))
+    except PhoneCodeExpiredError:
+        try:
+            temp_session, code_hash = await user_telethon.send_login_code(row['phone'])
+            await _save_login_state(db, user_id, row['phone'], encrypt_text(temp_session), code_hash)
+            await update.message.reply_text(
+                'That Telegram login code expired. I sent a fresh code now.\n\n'
+                'Send the newest numeric code only. Do not use the previous code.',
+                reply_markup=_back_markup()
+            )
+            return CODE
+        except Exception as resend_error:
+            logger.warning(f'Telegram code resend failed for owner {user_id}: {resend_error}')
+            await update.message.reply_text(
+                f'Code expired and resend failed: {str(resend_error)[:120]}',
+                reply_markup=_back_markup()
+            )
+            return ConversationHandler.END
+    except PhoneCodeInvalidError:
+        await update.message.reply_text(
+            'That Telegram login code was invalid. Send the newest numeric code from Telegram.',
+            reply_markup=_back_markup()
+        )
+        return CODE
     except Exception as e:
         logger.warning(f'Telegram code login failed for owner {user_id}: {e}')
         await update.message.reply_text(
