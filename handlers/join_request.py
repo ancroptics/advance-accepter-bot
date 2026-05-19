@@ -1,9 +1,11 @@
 import logging
 import asyncio
+import json
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import config
+from handlers.force_subscribe import build_force_sub_entry
 from services.watermark_service import get_watermark
 from services.cross_promo_service import get_cross_promo_text
 from services.language_service import get_welcome_for_language
@@ -144,6 +146,28 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 required_channels = []
 
             if required_channels:
+                force_channels_updated = False
+                for req_ch in required_channels:
+                    if not isinstance(req_ch, dict) or req_ch.get('url') or not req_ch.get('chat_id'):
+                        continue
+                    try:
+                        force_chat = await context.bot.get_chat(req_ch['chat_id'])
+                        repaired = await build_force_sub_entry(context, force_chat)
+                        if repaired.get('url'):
+                            req_ch.update(repaired)
+                            force_channels_updated = True
+                    except Exception as e:
+                        logger.warning(f'Could not repair force-sub invite link for {req_ch.get("chat_id")}: {e}')
+                if force_channels_updated:
+                    try:
+                        await db.update_channel_setting(
+                            chat_id,
+                            'force_subscribe_channels',
+                            json.dumps(required_channels),
+                        )
+                    except Exception as e:
+                        logger.warning(f'Could not save repaired force-sub invite links for {chat_id}: {e}')
+
                 all_joined = True
                 not_joined = []
                 for req_ch in required_channels:
