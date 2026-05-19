@@ -123,7 +123,7 @@ def _stale_callback_error(error):
     )
 
 
-async def _create_force_sub_invite_url(context, chat_info):
+async def _create_force_sub_invite_url(context, chat_info, creates_join_request=False):
     username = getattr(chat_info, 'username', None)
     if username:
         return f'https://t.me/{username}'
@@ -131,8 +131,8 @@ async def _create_force_sub_invite_url(context, chat_info):
     try:
         invite = await context.bot.create_chat_invite_link(
             chat_id=chat_info.id,
-            name='Force Subscribe',
-            creates_join_request=False,
+            name='Force Subscribe Approval' if creates_join_request else 'Force Subscribe',
+            creates_join_request=creates_join_request,
         )
         return invite.invite_link
     except Exception as e:
@@ -140,13 +140,154 @@ async def _create_force_sub_invite_url(context, chat_info):
         return ''
 
 
-async def build_force_sub_entry(context, chat_info):
+async def build_force_sub_entry(context, chat_info, creates_join_request=False):
     return {
         'chat_id': chat_info.id,
         'title': chat_info.title,
         'username': chat_info.username or '',
-        'url': await _create_force_sub_invite_url(context, chat_info),
+        'url': await _create_force_sub_invite_url(context, chat_info, creates_join_request),
+        'invite_requires_approval': bool(creates_join_request),
     }
+
+
+def _private_invite_mode_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton('✅ Normal Requests', callback_data='fsub_invite_mode:normal')],
+        [InlineKeyboardButton('🛂 Require Admin Approval', callback_data='fsub_invite_mode:approval')],
+        [InlineKeyboardButton('🔙 Cancel', callback_data='fsub_invite_mode:cancel')],
+    ])
+
+
+async def _ask_private_invite_mode(update, context, chat_info, scope, target_chat_id=None):
+    context.user_data['pending_private_force_sub'] = {
+        'scope': scope,
+        'target_chat_id': target_chat_id,
+        'force_chat_id': chat_info.id,
+        'title': chat_info.title,
+    }
+    await update.message.reply_text(
+        f'{chat_info.title} is private. Choose what kind of invite link users should receive:',
+        reply_markup=_private_invite_mode_markup()
+    )
+    return ConversationHandler.END
+
+
+async def _force_sub_slot_limit(db, user_id):
+    import config as _cfg
+    owner = await db.get_owner(user_id)
+    if _cfg.ENABLE_PREMIUM:
+        from handlers.premium import get_tier_features
+        tier = owner.get('tier', 'free') if owner else 'free'
+        if user_id in _cfg.SUPERADMIN_IDS:
+            tier = 'business'
+        features = get_tier_features(tier)
+        base_slots = features.get('max_channels', 1)
+    else:
+        base_slots = 1
+    bonus_slots = await db.get_referral_bonus_slots(user_id)
+    return base_slots, bonus_slots, base_slots + bonus_slots
+
+
+async def force_sub_invite_mode_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    mode = query.data.split(':', 1)[1]
+    pending = context.user_data.pop('pending_private_force_sub', None)
+    if mode == 'cancel':
+        await query.edit_message_text('Private force-sub channel add cancelled.')
+        return
+    if not pending:
+        await query.edit_message_text('This force-sub setup expired. Please add the private channel again.')
+        return
+
+    db = context.application.bot_data.get('db')
+    user_id = query.from_user.id
+    creates_join_request = mode == 'approval'
+    try:
+        chat_info = await context.bot.get_chat(pending['force_chat_id'])
+        new_entry = await build_force_sub_entry(context, chat_info, creates_join_request=creates_join_request)
+        if not new_entry.get('url'):
+            await query.edit_message_text(
+                f'⚠️ I could not create an invite link for {pending["title"]}.\n\n'
+                'Give the bot permission to invite users or create invite links, then add the channel again.'
+            )
+            return
+
+        if pending['scope'] == 'channel':
+            target_chat_id = pending['target_chat_id']
+            channel = await db.get_channel(target_chat_id)
+            if not channel:
+                await query.edit_message_text('Target channel not found. Please try again from channel settings.')
+                return
+            current_channels = _parse_force_channels(channel.get('force_subscribe_channels') or [])
+            if any(isinstance(ch, dict) and ch.get('chat_id') == chat_info.id for ch in current_channels):
+                await query.edit_message_text(f'⚠️ {chat_info.title} is already in the force subscribe list!')
+                return
+            base_slots, bonus_slots, max_slots = await _force_sub_slot_limit(db, user_id)
+            if len(current_channels) >= max_slots:
+                await query.edit_message_text(
+                    f'⚠️ You have reached your force sub channel limit ({max_slots} slots).\n\n'
+                    f'🔓 Base slots: {base_slots}\n'
+                    f'🔗 Bonus slots: {bonus_slots}',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton('🔙 Back', callback_data=f'force_sub_settings:{target_chat_id}')
+                    ]])
+                )
+                return
+            current_channels.append(new_entry)
+            await db.update_channel_setting(target_chat_id, 'force_subscribe_channels', json.dumps(current_channels))
+            if not channel.get('force_subscribe_enabled'):
+                await db.update_channel_setting(target_chat_id, 'force_subscribe_enabled', True)
+            await query.edit_message_text(
+                f'✅ Added {chat_info.title} to force subscribe list!\n\n'
+                f'Invite mode: {"Require admin approval" if creates_join_request else "Normal requests"}',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton('🔙 Force Subscribe Settings', callback_data=f'force_sub_settings:{target_chat_id}')
+                ]])
+            )
+            return
+
+        default_fsub_raw = await db.get_platform_setting(f'owner_{user_id}_default_fsub_channels', '[]')
+        try:
+            default_fsub = json.loads(default_fsub_raw) if isinstance(default_fsub_raw, str) else (default_fsub_raw or [])
+        except Exception:
+            default_fsub = []
+        if any(isinstance(ch, dict) and ch.get('chat_id') == chat_info.id for ch in default_fsub):
+            await query.edit_message_text(f'⚠️ {chat_info.title} is already in the default force subscribe list!')
+            return
+        base_slots, bonus_slots, max_slots = await _force_sub_slot_limit(db, user_id)
+        if len(default_fsub) >= max_slots:
+            await query.edit_message_text(
+                f'⚠️ You have reached your default force sub channel limit ({max_slots} slots).\n\n'
+                f'🔓 Base slots: {base_slots}\n'
+                f'🔗 Bonus slots: {bonus_slots}',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔙 Back', callback_data='dashboard')]])
+            )
+            return
+        default_fsub.append(new_entry)
+        await db.set_platform_setting(f'owner_{user_id}_default_fsub_channels', json.dumps(default_fsub))
+
+        channels = await db.get_owner_channels(user_id)
+        synced = 0
+        for ch in (channels or []):
+            full_ch = await db.get_channel(ch['chat_id'])
+            if full_ch and full_ch.get('force_subscribe_enabled'):
+                existing = _parse_force_channels(full_ch.get('force_subscribe_channels') or [])
+                existing_ids = {c.get('chat_id') for c in existing if isinstance(c, dict)}
+                if chat_info.id not in existing_ids:
+                    existing.append(new_entry)
+                    await db.update_channel_setting(ch['chat_id'], 'force_subscribe_channels', json.dumps(existing))
+                    synced += 1
+
+        await query.edit_message_text(
+            f'✅ Added {chat_info.title} as default force sub channel!\n\n'
+            f'Invite mode: {"Require admin approval" if creates_join_request else "Normal requests"}\n'
+            f'Synced to {synced} channel(s).',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔙 Dashboard', callback_data='dashboard')]])
+        )
+    except Exception as e:
+        logger.exception(f'Private force-sub invite mode failed: {e}')
+        await query.edit_message_text(f'❌ Could not add private force-sub channel: {str(e)[:120]}')
 
 
 async def remove_force_sub_callback(update, context):
@@ -359,6 +500,15 @@ async def handle_force_sub_channel_input(update, context):
             if ch.get('chat_id') == chat_info.id:
                 await update.message.reply_text(f'\u26a0\ufe0f {chat_info.title} is already in the force subscribe list!')
                 return ConversationHandler.END
+
+        if not chat_info.username:
+            return await _ask_private_invite_mode(
+                update,
+                context,
+                chat_info,
+                scope='channel',
+                target_chat_id=chat_id,
+            )
         
         new_entry = await build_force_sub_entry(context, chat_info)
         if not new_entry.get('url'):
@@ -496,6 +646,14 @@ async def handle_default_fsub_channel_input(update, context):
             if isinstance(ch, dict) and ch.get('chat_id') == chat_info.id:
                 await update.message.reply_text(f'\u26a0\ufe0f {chat_info.title} is already in the default force subscribe list!')
                 return ConversationHandler.END
+
+        if not chat_info.username:
+            return await _ask_private_invite_mode(
+                update,
+                context,
+                chat_info,
+                scope='default',
+            )
 
         new_entry = await build_force_sub_entry(context, chat_info)
         if not new_entry.get('url'):
