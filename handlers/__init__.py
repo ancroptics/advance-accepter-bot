@@ -168,7 +168,20 @@ def register_handlers(application):
     application.add_handler(CallbackQueryHandler(view_template_handler, pattern=r'^jiew_template:'))
     application.add_handler(CallbackQueryHandler(delete_template_handler, pattern=r'^delete_template:'))
 
-    # 5f. Batch approve/decline buttons
+    # 5f. Telegram user session connection for old request sync
+    from handlers.telegram_session import (
+        disconnect_telegram_session,
+        show_telegram_session_menu,
+        sync_old_requests_callback,
+        telegram_session_conv_handler,
+    )
+    application.add_handler(CommandHandler('oldsync', show_telegram_session_menu))
+    application.add_handler(telegram_session_conv_handler)
+    application.add_handler(CallbackQueryHandler(show_telegram_session_menu, pattern=r'^telegram_session_menu$'))
+    application.add_handler(CallbackQueryHandler(disconnect_telegram_session, pattern=r'^tg_session_disconnect$'))
+    application.add_handler(CallbackQueryHandler(sync_old_requests_callback, pattern=r'^tg_sync_(all|channel:)'))
+
+    # 5g. Batch approve/decline buttons
     application.add_handler(CallbackQueryHandler(batch_button_handler, pattern=r'^batch_'))
 
     # 6. Callback query handler (catch-all for buttons)
