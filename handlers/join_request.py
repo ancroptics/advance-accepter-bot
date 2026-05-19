@@ -5,7 +5,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import config
-from handlers.force_subscribe import build_force_sub_entry
+from handlers.force_subscribe import build_force_sub_entry, record_force_sub_join_request
 from services.watermark_service import get_watermark
 from services.cross_promo_service import get_cross_promo_text
 from services.language_service import get_welcome_for_language
@@ -29,6 +29,11 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception:
                 pass
             return
+
+        try:
+            await record_force_sub_join_request(db, user_id, chat_id)
+        except Exception as e:
+            logger.warning(f'Could not record force-sub join request for {user_id} in {chat_id}: {e}')
 
         # Step 1: Save the request
         try:
