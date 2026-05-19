@@ -176,7 +176,7 @@ async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text('Sending Telegram login code...')
     try:
-        temp_session, code_hash = await user_telethon.send_login_code(phone)
+        temp_session, code_hash = await user_telethon.send_login_code(phone, force_sms=True)
         await _save_login_state(db, user_id, phone, encrypt_text(temp_session), code_hash)
     except Exception as e:
         logger.warning(f'Telegram login code send failed for owner {user_id}: {e}')
